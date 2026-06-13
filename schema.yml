@@ -1,0 +1,347 @@
+openapi: 3.0.3
+info:
+  title: Job Market Intelligence API
+  version: 1.0.0
+  description: |-
+    Advanced Data Platform API for Job Market Analytics, Talent Intelligence, and Resume Parsing.
+
+    This API provides powerful tools to analyze job market trends, query historical job listings, manage user portfolios, and perform deep resume parsing with machine learning models.
+  contact:
+    name: API Support Team
+    email: support@jobmarketintelligence.com
+    url: https://jobmarketintelligence.com/support
+  license:
+    name: MIT License
+    url: https://opensource.org/licenses/MIT
+paths:
+  /api/v1/auth/login/:
+    post:
+      operationId: v1_auth_login_create
+      description: Verify credentials and generate a JSON Web Token (JWT) for secure
+        requests.
+      summary: User Authentication
+      tags:
+      - Authentication
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserLogin'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/UserLogin'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UserLogin'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenResponse'
+              examples:
+                SuccessfulAuthResponse:
+                  value:
+                    token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                    user_id: 42
+                    email: admin@jobmarketintelligence.com
+                    expires_in: 3600
+                  summary: Successful Auth Response
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                InvalidCredentialsResponse:
+                  value:
+                    error: Invalid email or password.
+                  summary: Invalid Credentials Response
+          description: ''
+  /api/v1/jobs/:
+    get:
+      operationId: v1_jobs_list
+      description: Query the index of jobs with search terms, location filters, and
+        minimum salary estimates.
+      summary: List Job Postings
+      parameters:
+      - in: header
+        name: X-Client-Version
+        schema:
+          type: string
+        description: Optional header stating client build version (e.g., 'v1.2.0').
+      - in: query
+        name: location
+        schema:
+          type: string
+        description: Filter listings by location (e.g. 'New York', 'Remote', 'London').
+      - in: query
+        name: min_salary
+        schema:
+          type: number
+          format: double
+        description: Minimum salary threshold for returned job listings.
+      - in: query
+        name: q
+        schema:
+          type: string
+        description: General search query for matching title, description or company.
+      tags:
+      - Job Postings
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/JobPost'
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+  /api/v1/resume/parse/:
+    post:
+      operationId: v1_resume_parse_create
+      description: Accepts a binary document (PDF/DOCX/TXT), parses text, and uses
+        Named Entity Recognition (NER) models to extract skill entities, education
+        background, and job history.
+      summary: Upload and Parse Resume
+      tags:
+      - Resume Analytics
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/ResumeUpload'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/ResumeUpload'
+        required: true
+      security:
+      - cookieAuth: []
+      - basicAuth: []
+      - BearerAuth: []
+      - ApiKeyAuth: []
+      - {}
+      responses:
+        '201':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                SuccessfulExtractionResponse:
+                  value:
+                    status: success
+                    filename: john_doe_resume.pdf
+                    parsed_data:
+                      candidate_name: John Doe
+                      detected_skills:
+                      - Python
+                      - Django
+                      - PostgreSQL
+                      - REST APIs
+                      - AWS
+                      highest_degree: Master of Science in Computer Science
+                      institutions:
+                      - Stanford University
+                      confidence_score: 0.94
+                  summary: Successful Extraction Response
+          description: ''
+        '400':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+          description: ''
+        '415':
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: {}
+              examples:
+                UnsupportedFileType:
+                  value:
+                    error: Unsupported Media Type. Only PDF, DOCX, and TXT files are
+                      accepted.
+                  summary: Unsupported File Type
+          description: ''
+components:
+  schemas:
+    JobPost:
+      type: object
+      properties:
+        id:
+          type: integer
+          readOnly: true
+          description: Unique auto-generated ID of the job posting.
+        title:
+          type: string
+          description: Title of the job role (e.g. Senior Machine Learning Engineer).
+          maxLength: 255
+        company:
+          type: string
+          description: Company offering the position.
+          maxLength: 255
+        location:
+          type: string
+          description: Geographical location or 'Remote'.
+          maxLength: 255
+        description:
+          type: string
+          description: Full markdown-formatted description of the job profile and
+            requirements.
+        skills_required:
+          type: array
+          items:
+            type: string
+            maxLength: 100
+          description: List of key technical or soft skills required.
+        salary_range:
+          allOf:
+          - $ref: '#/components/schemas/SalaryRange'
+          description: Estimated compensation details.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: Timestamp when this job posting was indexed.
+      required:
+      - company
+      - created_at
+      - description
+      - id
+      - location
+      - salary_range
+      - skills_required
+      - title
+    ResumeUpload:
+      type: object
+      properties:
+        resume_file:
+          type: string
+          format: uri
+          description: The resume file in PDF, DOCX, or text format to be uploaded
+            and parsed.
+        extract_skills:
+          type: boolean
+          default: true
+          description: Whether to execute the skills extraction pipeline on the uploaded
+            document.
+        extract_education:
+          type: boolean
+          default: true
+          description: Whether to extract academic histories and degrees.
+      required:
+      - resume_file
+    SalaryRange:
+      type: object
+      properties:
+        min_salary:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          description: Minimum estimated salary (e.g. 80000.00)
+        max_salary:
+          type: string
+          format: decimal
+          pattern: ^-?\d{0,10}(?:\.\d{0,2})?$
+          description: Maximum estimated salary (e.g. 120000.00)
+        currency:
+          type: string
+          default: USD
+          description: Three-letter ISO currency code.
+          maxLength: 3
+      required:
+      - max_salary
+      - min_salary
+    TokenResponse:
+      type: object
+      properties:
+        token:
+          type: string
+          description: JWT Authorization token to be used in Bearer Auth header.
+        user_id:
+          type: integer
+          description: Unique database ID of the logged in user.
+        email:
+          type: string
+          format: email
+          description: The email address associated with the account.
+        expires_in:
+          type: integer
+          default: 3600
+          description: Token expiration duration in seconds.
+      required:
+      - email
+      - token
+      - user_id
+    UserLogin:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+          default: admin@jobmarketintelligence.com
+          description: The corporate email address of the user.
+        password:
+          type: string
+          writeOnly: true
+          description: The secure password of the user.
+      required:
+      - password
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API Key authentication. Enter your API Key in the X-API-Key header.
+    BearerAuth:
+      type: apiKey
+      in: header
+      name: Authorization
+      description: 'Token-based authentication. Enter: `Bearer <token>`'
+    basicAuth:
+      type: http
+      scheme: basic
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: sessionid
+tags:
+- name: Authentication
+  description: Endpoints for user registration, login, and token management.
+- name: Job Postings
+  description: Search and manage job listings, salary estimations, and location data.
+- name: Resume Analytics
+  description: Upload and parse resumes, extract skills, and match candidate profiles.
