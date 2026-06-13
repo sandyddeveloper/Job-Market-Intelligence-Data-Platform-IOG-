@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import RedirectView
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularRedocView,
@@ -7,6 +8,9 @@ from drf_spectacular.views import (
 )
 
 urlpatterns = [
+    # Redirect root to Swagger UI documentation
+    path('', RedirectView.as_view(url='api/schema/swagger-ui/', permanent=True)),
+    
     path('admin/', admin.site.urls),
     
     # OpenAPI 3 schema download/generation endpoint
@@ -21,3 +25,4 @@ urlpatterns = [
     # API endpoints
     path('api/v1/', include('api.v1.urls')),
 ]
+
