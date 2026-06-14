@@ -101,20 +101,8 @@ class CSVETLPipeline:
                 file_id = url.split("/d/")[1].split("/")[0]
                 
             if file_id:
-                confirm_url = "https://docs.google.com/uc?export=download"
-                params = {'id': file_id}
-                response = session.get(confirm_url, params=params, stream=True)
-                
-                # Check for confirmation token in cookies
-                token = None
-                for key, value in response.cookies.items():
-                    if key.startswith('download_warning'):
-                        token = value
-                        break
-                        
-                if token:
-                    params['confirm'] = token
-                    response = session.get(confirm_url, params=params, stream=True)
+                self._download_gdrive_file(file_id, dest_path)
+                return
             else:
                 response = session.get(url, stream=True)
         else:
@@ -142,13 +130,14 @@ class CSVETLPipeline:
             self._download_and_extract_zip(zip_url)
 
     def _download_from_gdrive_folder(self, folder_url: str) -> None:
-        """Download individual files from a public Google Drive folder using the Drive API v3."""
+        """Download from Google Drive folder by first scraping the folder page HTML to bypass 403 API limits."""
         import requests
+        import re
 
         # Extract folder ID from URL
         folder_id = folder_url.rstrip('/').split('/')[-1].split('?')[0]
-        print(f"Detected Google Drive folder ID: {folder_id}. Listing files...")
-        
+        print(f"Detected Google Drive folder ID: {folder_id}. Scanning public folder HTML...")
+
         # Known mapping of CSV filenames to their local subdirectories
         file_destination_map = {
             'industries.csv': 'info',
@@ -165,57 +154,54 @@ class CSVETLPipeline:
             'DataAnalyst.csv': 'analysis',
             'ds_salaries.csv': 'analysis',
         }
-        
-        api_key = None  # Public folders don't need an API key for listing
-        list_url = "https://www.googleapis.com/drive/v3/files"
-        params = {
-            'q': f"'{folder_id}' in parents and trashed = false",
-            'fields': 'files(id, name, mimeType)',
-            'pageSize': 100,
-        }
-        
+
         try:
-            response = requests.get(list_url, params=params, timeout=30)
-            if response.status_code != 200:
-                print(f"Could not list Google Drive folder (status {response.status_code}). "
-                      f"Attempting recursive subfolder scan...")
-                # Try scanning subfolders by known names
-                self._download_gdrive_subfolders(folder_id, file_destination_map)
-                return
-                
-            files = response.json().get('files', [])
-            if not files:
-                print("Google Drive folder appears empty or inaccessible. "
-                      "Make sure sharing is set to 'Anyone with the link'.")
-                return
+            # 1. Fetch public folder HTML page
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            response = requests.get(folder_url, headers=headers, timeout=30)
+            response.raise_for_status()
+            html = response.text
+
+            # 2. Parse filenames and file IDs using regex
+            # Look for HTML elements like: data-id="FILE_ID" ... data-tooltip="FILENAME Compressed archive"
+            # and JavaScript serialized metadata like: ["FILE_ID",[...],"FILENAME"
+            found_files = []
             
-            # Check if the folder contains subfolders (info, companies, job, analysis)
-            subfolders = {f['name']: f['id'] for f in files if f.get('mimeType') == 'application/vnd.google-apps.folder'}
+            # Match elements in DOM: data-id="ID" and data-tooltip="FILENAME"
+            dom_matches = re.findall(r'data-id="([a-zA-Z0-9_-]{33,35})"[^>]+data-tooltip="([^"]+)"', html)
+            for file_id, tooltip in dom_matches:
+                filename = tooltip.split(' ')[0] # E.g., "raw.zip Compressed archive" -> "raw.zip"
+                found_files.append((file_id, filename))
+
+            # Match initialData JSON/JS block (fallback/supplement)
+            init_matches = re.findall(r'\\x22([a-zA-Z0-9_-]{33,35})\\x22,\s*\\x5b\\x22' + folder_id + r'\\x22\\x5d,\s*\\x22([^"\\]+)\\x22', html)
+            for file_id, filename in init_matches:
+                found_files.append((file_id, filename))
+
+            # Remove duplicate file entries while keeping order
+            seen_ids = set()
+            files = []
+            for file_id, filename in found_files:
+                if file_id not in seen_ids and file_id != folder_id:
+                    seen_ids.add(file_id)
+                    files.append({'id': file_id, 'name': filename})
+
+            print(f"Scraped folder contents. Found files: {files}")
+
+            # 3. Handle ZIP files inside folder (like raw.zip)
+            zip_file = next((f for f in files if f['name'].lower().endswith('.zip')), None)
+            if zip_file:
+                print(f"Found ZIP file '{zip_file['name']}' in Google Drive folder. Downloading and extracting...")
+                zip_download_url = f"https://drive.google.com/uc?export=download&id={zip_file['id']}"
+                self._download_and_extract_zip(zip_download_url)
+                return
+
+            # 4. If no ZIP is found, download CSV files individually
             csv_files = [f for f in files if f['name'].lower().endswith('.csv')]
-            
-            if subfolders:
-                # Folder contains subdirectories — download CSVs from each
-                print(f"Found {len(subfolders)} subfolders: {list(subfolders.keys())}")
-                for subfolder_name, subfolder_id in subfolders.items():
-                    sub_params = {
-                        'q': f"'{subfolder_id}' in parents and trashed = false",
-                        'fields': 'files(id, name)',
-                        'pageSize': 100,
-                    }
-                    sub_resp = requests.get(list_url, params=sub_params, timeout=30)
-                    if sub_resp.status_code != 200:
-                        print(f"Could not list subfolder '{subfolder_name}'")
-                        continue
-                    sub_files = sub_resp.json().get('files', [])
-                    for sf in sub_files:
-                        if sf['name'].lower().endswith('.csv'):
-                            dest_dir = self.base_dir / subfolder_name
-                            dest_dir.mkdir(parents=True, exist_ok=True)
-                            dest_path = dest_dir / sf['name']
-                            self._download_gdrive_file(sf['id'], dest_path)
-            elif csv_files:
-                # Folder contains flat CSVs — map them to subdirectories
-                print(f"Found {len(csv_files)} CSV files in root folder. Mapping to subdirectories...")
+            if csv_files:
+                print(f"Found {len(csv_files)} CSV files in Google Drive folder. Downloading individually...")
                 for f in csv_files:
                     subdir = file_destination_map.get(f['name'])
                     if subdir:
@@ -223,13 +209,63 @@ class CSVETLPipeline:
                         dest_dir.mkdir(parents=True, exist_ok=True)
                         dest_path = dest_dir / f['name']
                         self._download_gdrive_file(f['id'], dest_path)
-                    else:
-                        print(f"Skipping unknown file: {f['name']}")
-            else:
-                print("No CSV files or subfolders found in Google Drive folder.")
+                return
+
+            # 5. API Fallback if scraping yielded nothing
+            print("Scraper found no files. Falling back to Google Drive API v3...")
+            list_url = "https://www.googleapis.com/drive/v3/files"
+            params = {
+                'q': f"'{folder_id}' in parents and trashed = false",
+                'fields': 'files(id, name, mimeType)',
+                'pageSize': 100,
+            }
+            api_resp = requests.get(list_url, params=params, timeout=30)
+            if api_resp.status_code == 200:
+                api_files = api_resp.json().get('files', [])
+                # If the folder contains subfolders/files
+                subfolders = {f['name']: f['id'] for f in api_files if f.get('mimeType') == 'application/vnd.google-apps.folder'}
+                api_csv_files = [f for f in api_files if f['name'].lower().endswith('.csv')]
+                api_zip_files = [f for f in api_files if f['name'].lower().endswith('.zip')]
                 
+                if api_zip_files:
+                    zip_file = api_zip_files[0]
+                    zip_download_url = f"https://drive.google.com/uc?export=download&id={zip_file['id']}"
+                    self._download_and_extract_zip(zip_download_url)
+                    return
+                elif api_csv_files:
+                    for f in api_csv_files:
+                        subdir = file_destination_map.get(f['name'])
+                        if subdir:
+                            dest_dir = self.base_dir / subdir
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            dest_path = dest_dir / f['name']
+                            self._download_gdrive_file(f['id'], dest_path)
+                    return
+            
+            # 6. Final subfolder lookup fallback
+            print("Google Drive API call failed or folder empty. Attempting fallback to download known raw.zip directly...")
+            try:
+                known_zip_id = '1-FmmM1p_YfVq2atpwYDWFusNL2Rm1IG5'
+                zip_download_url = f"https://drive.google.com/uc?export=download&id={known_zip_id}"
+                self._download_and_extract_zip(zip_download_url)
+                return
+            except Exception as fallback_err:
+                logger.error(f"Fallback direct download of raw.zip failed: {fallback_err}", exc_info=True)
+            
+            print("Performing local mapping scan...")
+            self._download_gdrive_subfolders(folder_id, file_destination_map)
+
         except Exception as e:
-            logger.error(f"Failed to download from Google Drive folder: {e}", exc_info=True)
+            logger.error(f"Failed to scrape or download from Google Drive folder: {e}", exc_info=True)
+            print("Attempting fallback to download known raw.zip directly...")
+            try:
+                known_zip_id = '1-FmmM1p_YfVq2atpwYDWFusNL2Rm1IG5'
+                zip_download_url = f"https://drive.google.com/uc?export=download&id={known_zip_id}"
+                self._download_and_extract_zip(zip_download_url)
+                return
+            except Exception as fallback_err:
+                logger.error(f"Fallback direct download of raw.zip failed: {fallback_err}", exc_info=True)
+            self._download_gdrive_subfolders(folder_id, file_destination_map)
 
     def _download_gdrive_subfolders(self, folder_id: str, file_map: dict) -> None:
         """Fallback: try downloading known files directly by scanning subfolder names."""
@@ -252,8 +288,9 @@ class CSVETLPipeline:
             print(f"File not available for direct download: {filename} -> {subdir}/")
 
     def _download_gdrive_file(self, file_id: str, dest_path: Path) -> None:
-        """Download a single file from Google Drive by file ID."""
+        """Download a single file from Google Drive by file ID, handling large file warnings."""
         import requests
+        import re
         
         if dest_path.exists():
             print(f"File already exists, skipping: {dest_path}")
@@ -261,20 +298,37 @@ class CSVETLPipeline:
             
         download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
         session = requests.Session()
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
         
         try:
-            response = session.get(download_url, stream=True, timeout=60)
+            response = session.get(download_url, stream=True, headers=headers, timeout=60)
             
-            # Handle large file confirmation page
-            for key, value in response.cookies.items():
-                if key.startswith('download_warning'):
-                    response = session.get(
-                        download_url, 
-                        params={'confirm': value}, 
-                        stream=True, 
-                        timeout=60
-                    )
-                    break
+            # Check if this is a virus warning / confirmation page
+            content_type = response.headers.get('Content-Type', '')
+            if 'text/html' in content_type:
+                html = response.text
+                
+                # Extract hidden input fields
+                inputs = {}
+                for match in re.finditer(r'<input\s+[^>]*type="hidden"[^>]*>', html):
+                    tag = match.group(0)
+                    name_m = re.search(r'name="([^"]+)"', tag)
+                    val_m = re.search(r'value="([^"]*)"', tag)
+                    if name_m and val_m:
+                        inputs[name_m.group(1)] = val_m.group(1)
+                
+                if inputs:
+                    # Found inputs (e.g. id, export, confirm, uuid)
+                    form_action_m = re.search(r'<form[^>]*action="([^"]+)"', html)
+                    if form_action_m:
+                        action_url = form_action_m.group(1)
+                    else:
+                        action_url = "https://drive.usercontent.google.com/download"
+                        
+                    print(f"Bypassing GDrive warning for file {file_id}. Submitting parameters: {inputs}")
+                    response = session.get(action_url, params=inputs, headers=headers, stream=True, timeout=60)
             
             response.raise_for_status()
             
@@ -285,6 +339,7 @@ class CSVETLPipeline:
             print(f"Downloaded: {dest_path.name} -> {dest_path}")
         except Exception as e:
             logger.error(f"Failed to download Google Drive file {file_id}: {e}", exc_info=True)
+            raise e
 
     def _download_and_extract_zip(self, zip_url: str) -> None:
         """Download and extract a ZIP file from a direct URL."""
@@ -777,19 +832,26 @@ class CSVETLPipeline:
             name_to_id = {}
             if len(unique_companies) > 0:
                 name_to_id = resolve_company_ids(unique_companies)
-                companies_df = pd.DataFrame({'name': unique_companies})
-                companies_df['company_id'] = companies_df['name'].map(lambda x: name_to_id.get(x.lower()))
-                companies_df = companies_df.drop_duplicates(subset=['company_id'])
-                companies_df['data_source'] = 'CSV'
                 
-                companies_to_create = [Company(**row) for row in clean_records(companies_df)]
+                companies_to_create = []
+                seen_co_ids = set()
+                for name in unique_companies:
+                    co_id = name_to_id.get(name.lower())
+                    if co_id and co_id not in seen_co_ids:
+                        seen_co_ids.add(co_id)
+                        companies_to_create.append(Company(
+                            company_id=co_id,
+                            name=name,
+                            data_source='CSV'
+                        ))
+                
                 Company.objects.bulk_create(
                     companies_to_create,
                     update_conflicts=True,
                     update_fields=['name', 'data_source'],
                     unique_fields=['company_id']
                 )
-                self.loaded_company_ids.update(companies_df['company_id'].tolist())
+                self.loaded_company_ids.update(seen_co_ids)
                 
             # Resolve industries
             unique_industries = chunk['industry_clean'].dropna().unique()
@@ -810,28 +872,36 @@ class CSVETLPipeline:
                 for name, pk in zip(ind_df['industry_name'], ind_df['industry_id']):
                     industry_map[name.lower().strip()] = pk
             
-            benchmark_df = pd.DataFrame({
-                'job_title': chunk['job_title_clean'],
-                'salary_estimate': chunk.get('Salary Estimate', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
-                'job_description': chunk.get('Job Description', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
-                'rating': chunk.get('Rating', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
-                'company_name': chunk['company_name_raw'],
-                'company_id': chunk['company_name_clean'].map(lambda x: name_to_id.get(x.lower()) if x else None),
-                'location': chunk.get('Location', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
-                'headquarters': chunk.get('Headquarters', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
-                'size': chunk.get('Size', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
-                'founded': chunk.get('Founded', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
-                'type_of_ownership': chunk.get('Type of ownership', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
-                'industry': chunk.get('Industry', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
-                'industry_ref_id': chunk['industry_clean'].map(lambda x: industry_map.get(x.lower().strip()) if x else None),
-                'sector': chunk.get('Sector', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
-                'revenue': chunk.get('Revenue', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
-                'competitors': chunk.get('Competitors', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
-                'easy_apply': chunk.get('Easy Apply', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 20)),
-            })
-            
-            records = [DataAnalystBenchmark(**row) for row in clean_records(benchmark_df)]
-            DataAnalystBenchmark.objects.bulk_create(records, ignore_conflicts=True)
+            benchmarks_to_create = []
+            for _, row in chunk.iterrows():
+                co_raw = row.get('Company Name')
+                co_clean = clean_co_name(co_raw) if pd.notna(co_raw) else None
+                co_id = name_to_id.get(co_clean.lower()) if co_clean else None
+                
+                ind_raw = row.get('Industry')
+                ind_clean = clean_ind_name(ind_raw) if pd.notna(ind_raw) else None
+                ind_id = industry_map.get(ind_clean.lower().strip()) if ind_clean else None
+                
+                benchmarks_to_create.append(DataAnalystBenchmark(
+                    job_title=parse_str(row.get('Job Title'), 255),
+                    salary_estimate=parse_str(row.get('Salary Estimate'), 100),
+                    job_description=parse_str(row.get('Job Description')),
+                    rating=parse_decimal(row.get('Rating')),
+                    company_name=parse_str(co_raw, 255),
+                    company_id=co_id,
+                    location=parse_str(row.get('Location'), 255),
+                    headquarters=parse_str(row.get('Headquarters'), 255),
+                    size=parse_str(row.get('Size'), 100),
+                    founded=parse_int(row.get('Founded')),
+                    type_of_ownership=parse_str(row.get('Type of ownership'), 255),
+                    industry=parse_str(row.get('Industry'), 255),
+                    industry_ref_id=ind_id,
+                    sector=parse_str(row.get('Sector'), 255),
+                    revenue=parse_str(row.get('Revenue'), 100),
+                    competitors=parse_str(row.get('Competitors')),
+                    easy_apply=parse_str(row.get('Easy Apply'), 20)
+                ))
+            DataAnalystBenchmark.objects.bulk_create(benchmarks_to_create, ignore_conflicts=True)
         print(f"Successfully loaded {count} Data Analyst benchmark records.")
 
     # 13. Load Data Science Benchmarks
