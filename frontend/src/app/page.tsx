@@ -11,10 +11,24 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
-  AreaChart,
-  Area
+  Legend
 } from "recharts";
+import { 
+  Briefcase, 
+  TrendingUp, 
+  MapPin, 
+  Layers, 
+  FileText, 
+  Compass, 
+  MoreHorizontal, 
+  Plus, 
+  Image as ImageIcon,
+  Calendar,
+  MessageSquare,
+  ThumbsUp,
+  Share2,
+  Send
+} from "lucide-react";
 
 interface OverviewData {
   total_jobs: number;
@@ -27,7 +41,7 @@ interface OverviewData {
   data_source_distribution: Array<{ data_source: string; count: number }>;
 }
 
-const COLORS = ["#6366f1", "#a855f7", "#ec4899", "#10b981", "#f59e0b", "#3b82f6"];
+const COLORS = ["#0a66c2", "#00a0dc", "#0073b1", "#33a0fc", "#70b5f9", "#b3dbff"];
 
 export default function DashboardPage() {
   const [data, setData] = useState<OverviewData | null>(null);
@@ -55,26 +69,24 @@ export default function DashboardPage() {
 
   if (!mounted) {
     return (
-      <div className="flex-1 bg-slate-950 p-8 flex items-center justify-center">
-        <div className="text-slate-400">Loading workspace...</div>
+      <div className="flex-1 bg-[#f3f2f0] py-12 flex items-center justify-center">
+        <div className="text-[#5e5e5e] text-sm">Loading workspace...</div>
       </div>
     );
   }
 
   if (loading) {
     return (
-      <div className="flex-1 bg-slate-950 p-8 space-y-6">
-        <header className="flex justify-between items-center pb-4 border-b border-slate-800">
-          <div className="h-8 w-64 bg-slate-800 rounded animate-pulse" />
-        </header>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          {[1, 2, 3, 4].map((i) => (
-            <div key={i} className="h-32 bg-slate-900 border border-slate-800 rounded-xl animate-pulse" />
-          ))}
+      <div className="w-full max-w-6xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-5 animate-pulse">
+        <div className="lg:col-span-3 space-y-4">
+          <div className="h-64 bg-white border border-[#e0e0e0] rounded-lg" />
         </div>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <div className="h-96 bg-slate-900 border border-slate-800 rounded-xl animate-pulse" />
-          <div className="h-96 bg-slate-900 border border-slate-800 rounded-xl animate-pulse" />
+        <div className="lg:col-span-6 space-y-4">
+          <div className="h-28 bg-white border border-[#e0e0e0] rounded-lg" />
+          <div className="h-96 bg-white border border-[#e0e0e0] rounded-lg" />
+        </div>
+        <div className="lg:col-span-3 space-y-4">
+          <div className="h-80 bg-white border border-[#e0e0e0] rounded-lg" />
         </div>
       </div>
     );
@@ -82,15 +94,15 @@ export default function DashboardPage() {
 
   if (error || !data) {
     return (
-      <div className="flex-1 bg-slate-950 p-8 flex flex-col items-center justify-center">
-        <div className="bg-red-500/10 border border-red-500/20 p-6 rounded-xl text-center max-w-md">
-          <h2 className="text-red-400 font-semibold text-lg mb-2">Failed to load Dashboard</h2>
-          <p className="text-slate-400 text-sm mb-4">
+      <div className="flex-1 py-16 flex flex-col items-center justify-center">
+        <div className="bg-white border border-[#e0e0e0] p-8 rounded-lg text-center max-w-md shadow-sm">
+          <h2 className="text-[#b24020] font-semibold text-lg mb-2">Failed to load Dashboard</h2>
+          <p className="text-[#5e5e5e] text-sm mb-4">
             Could not retrieve data from the backend. Please confirm that the Django server is running.
           </p>
           <button
             onClick={() => window.location.reload()}
-            className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg text-sm font-medium transition-colors"
+            className="px-5 py-2 bg-[#0a66c2] hover:bg-[#004182] text-white rounded-full text-sm font-semibold transition-all shadow-sm"
           >
             Retry Connection
           </button>
@@ -99,7 +111,7 @@ export default function DashboardPage() {
     );
   }
 
-  // Process Stats calculations
+  // Calculate calculations
   const remoteCount = data.remote_distribution.find((d) => d.remote_allowed === true)?.count || 0;
   const nonRemoteCount = data.remote_distribution.find((d) => d.remote_allowed === false)?.count || 0;
   const remoteRatio = data.total_jobs > 0 ? (remoteCount / data.total_jobs) * 100 : 0;
@@ -115,170 +127,238 @@ export default function DashboardPage() {
   }));
 
   return (
-    <div className="p-8 space-y-8 bg-slate-950 min-h-screen">
-      {/* Header bar */}
-      <header className="flex flex-col md:flex-row justify-between md:items-center gap-4 pb-6 border-b border-slate-800">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-            Market Intelligence Overview
-          </h1>
-          <p className="text-slate-400 text-sm mt-1">
-            Real-time analytics and parsing indexes collected from processed job files and Adzuna APIs.
-          </p>
-        </div>
-        <div className="flex items-center gap-3">
-          <span className="px-3 py-1 bg-slate-800 text-indigo-400 rounded-full border border-slate-700 text-xs font-semibold">
-            Data Source: CSV & API
-          </span>
-        </div>
-      </header>
-
-      {/* KPI Cards Grid */}
-      <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden transition-all duration-300 hover:border-indigo-500/50 hover:shadow-indigo-500/5 group">
-          <div className="absolute top-0 right-0 h-24 w-24 bg-indigo-500/5 rounded-full blur-xl transition-all group-hover:bg-indigo-500/10" />
-          <p className="text-sm font-medium text-slate-400">Total Indexed Postings</p>
-          <p className="text-3xl font-bold mt-2 text-white">{data.total_jobs.toLocaleString()}</p>
-          <div className="mt-2 text-xs text-indigo-400 flex items-center gap-1">
-            <span>Live indexed data entries</span>
+    <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      {/* LEFT COLUMN: Profile / Navigation Summary */}
+      <aside className="lg:col-span-3 space-y-3">
+        {/* Profile Card Summary */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg overflow-hidden shadow-sm">
+          <div className="h-16 bg-[#a0b4b7] relative" />
+          <div className="px-4 pb-4 text-center border-b border-[#e0e0e0]">
+            <div className="-mt-8 mx-auto h-16 w-16 rounded-full bg-white border-2 border-white overflow-hidden shadow-sm flex items-center justify-center text-2xl font-bold text-[#0a66c2]">
+              JI
+            </div>
+            <h2 className="text-base font-bold text-[#191919] mt-3">JobIntel Service</h2>
+            <p className="text-xs text-[#5e5e5e] mt-0.5">Platform Analytics & Intelligence</p>
+          </div>
+          <div className="p-4 space-y-3 text-xs border-b border-[#e0e0e0]">
+            <div className="flex justify-between items-center">
+              <span className="text-[#5e5e5e]">Total Indexed Postings</span>
+              <span className="font-bold text-[#0a66c2]">{data.total_jobs.toLocaleString()}</span>
+            </div>
+            <div className="flex justify-between items-center">
+              <span className="text-[#5e5e5e]">Avg Annual Salary</span>
+              <span className="font-bold text-[#0a66c2]">
+                ${data.average_salary_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+              </span>
+            </div>
+          </div>
+          <div className="p-3 bg-[#f9f9f9] text-center hover:bg-[#eaeaea] transition-all">
+            <a href="/jobs" className="text-xs font-semibold text-[#0a66c2]">
+              Search all listings
+            </a>
           </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden transition-all duration-300 hover:border-purple-500/50 hover:shadow-purple-500/5 group">
-          <div className="absolute top-0 right-0 h-24 w-24 bg-purple-500/5 rounded-full blur-xl transition-all group-hover:bg-purple-500/10" />
-          <p className="text-sm font-medium text-slate-400">Average Annual Salary</p>
-          <p className="text-3xl font-bold mt-2 text-white">
-            ${data.average_salary_usd.toLocaleString(undefined, { maximumFractionDigits: 0 })}
-          </p>
-          <div className="mt-2 text-xs text-purple-400">Normalized equivalent in USD</div>
+        {/* Live Index Statistics Card */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg p-4 shadow-sm space-y-3">
+          <h3 className="text-xs font-bold text-[#191919]">JobIntel Resource Links</h3>
+          <div className="space-y-2 text-xs">
+            <a href="/jobs" className="flex items-center space-x-2 text-[#5e5e5e] hover:text-[#0a66c2] font-semibold py-1">
+              <Briefcase className="h-4 w-4" />
+              <span>Job Postings Feed</span>
+            </a>
+            <a href="/benchmarks" className="flex items-center space-x-2 text-[#5e5e5e] hover:text-[#0a66c2] font-semibold py-1">
+              <TrendingUp className="h-4 w-4" />
+              <span>Global Benchmarks</span>
+            </a>
+          </div>
         </div>
+      </aside>
 
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden transition-all duration-300 hover:border-emerald-500/50 hover:shadow-emerald-500/5 group">
-          <div className="absolute top-0 right-0 h-24 w-24 bg-emerald-500/5 rounded-full blur-xl transition-all group-hover:bg-emerald-500/10" />
-          <p className="text-sm font-medium text-slate-400">Remote Work Ratio</p>
-          <p className="text-3xl font-bold mt-2 text-white">{remoteRatio.toFixed(1)}%</p>
-          <div className="mt-2 text-xs text-emerald-400">
-            {remoteCount} remote / {nonRemoteCount} on-site
+      {/* MIDDLE COLUMN: Feed & Dashboard Charts */}
+      <section className="lg:col-span-6 space-y-4">
+        {/* Mock Share Feed Post Box */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg p-4 shadow-sm space-y-3">
+          <div className="flex items-center space-x-2">
+            <div className="h-9 w-9 rounded-full bg-[#e0e0e0] flex items-center justify-center font-bold text-[#5e5e5e] text-xs">
+              JI
+            </div>
+            <a
+              href="/jobs"
+              className="flex-1 bg-white border border-[#808080] hover:bg-[#f3f2f0] rounded-full px-4 py-2.5 text-xs font-semibold text-[#5e5e5e] text-left transition-colors"
+            >
+              Search 120k+ job market listings now...
+            </a>
+          </div>
+          <div className="flex justify-between items-center text-[#5e5e5e] text-xs pt-1 font-semibold px-1">
+            <div className="flex items-center space-x-2 hover:bg-[#f3f2f0] p-2 rounded cursor-pointer">
+              <Compass className="h-5 w-5 text-[#378fe9]" />
+              <span>Explore Analytics</span>
+            </div>
+            <div className="flex items-center space-x-2 hover:bg-[#f3f2f0] p-2 rounded cursor-pointer">
+              <Layers className="h-5 w-5 text-[#5f9b41]" />
+              <span>Filter Skills</span>
+            </div>
+            <div className="flex items-center space-x-2 hover:bg-[#f3f2f0] p-2 rounded cursor-pointer">
+              <FileText className="h-5 w-5 text-[#e7a33c]" />
+              <span>Salary Stats</span>
+            </div>
           </div>
         </div>
 
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl relative overflow-hidden transition-all duration-300 hover:border-pink-500/50 hover:shadow-pink-500/5 group">
-          <div className="absolute top-0 right-0 h-24 w-24 bg-pink-500/5 rounded-full blur-xl transition-all group-hover:bg-pink-500/10" />
-          <p className="text-sm font-medium text-slate-400">Technical Skills Index</p>
-          <p className="text-3xl font-bold mt-2 text-white">{data.top_skills.length}</p>
-          <div className="mt-2 text-xs text-pink-400">Mapped skill classifications</div>
+        {/* FEED CARD 1: Top Hiring Industries (Recharts BarChart) */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm">
+          <div className="p-4 flex justify-between items-start">
+            <div className="flex space-x-2">
+              <div className="h-10 w-10 rounded bg-[#0a66c2] flex items-center justify-center font-bold text-lg text-white">
+                JI
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#191919]">JobIntel Platform Insight</h3>
+                <p className="text-[11px] text-[#5e5e5e]">Aggregate Industry Demand Indexes • Just now</p>
+              </div>
+            </div>
+            <button className="text-[#5e5e5e] hover:text-[#191919] p-1 rounded-full hover:bg-[#f3f2f0] transition-colors">
+              <MoreHorizontal className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="px-4 pb-2 text-xs text-[#191919] leading-relaxed">
+            Here are the top hiring sectors based on our total indexed job posting entries. The business services, tech, and engineering sectors show the highest job posting density.
+          </div>
+          <div className="p-4 border-t border-[#f3f2f0] min-w-0">
+            <div className="h-72 w-full">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <BarChart data={data.top_industries} margin={{ bottom: 20 }}>
+                  <XAxis dataKey="industry_name" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} angle={-20} textAnchor="end" interval={0} />
+                  <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Bar dataKey="job_count" fill="#0a66c2" radius={[3, 3, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* FEED CARD 2: Mapped Skills Demand (Recharts BarChart) */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm">
+          <div className="p-4 flex justify-between items-start">
+            <div className="flex space-x-2">
+              <div className="h-10 w-10 rounded bg-[#00a0dc] flex items-center justify-center font-bold text-lg text-white">
+                JS
+              </div>
+              <div>
+                <h3 className="text-sm font-bold text-[#191919]">Technical Skills Demand Matrix</h3>
+                <p className="text-[11px] text-[#5e5e5e]">Skills Frequency Index • Calculated live</p>
+              </div>
+            </div>
+            <button className="text-[#5e5e5e] hover:text-[#191919] p-1 rounded-full hover:bg-[#f3f2f0] transition-colors">
+              <MoreHorizontal className="h-5 w-5" />
+            </button>
+          </div>
+          <div className="px-4 pb-2 text-xs text-[#191919] leading-relaxed">
+            This graph highlights the relative frequency of technical skills requested across all job descriptions. Core languages like Python, SQL, and AWS infrastructure command the highest representation.
+          </div>
+          <div className="p-4 border-t border-[#f3f2f0] min-w-0">
+            <div className="h-80 w-full">
+              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <BarChart data={data.top_skills} layout="vertical" margin={{ left: 10 }}>
+                  <XAxis type="number" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <YAxis dataKey="skill_name" type="category" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Bar dataKey="job_count" fill="#00a0dc" radius={[0, 3, 3, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </div>
+
+        {/* FEED CARD 3: Allocation Splits (Pie Charts) */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm p-4 space-y-4">
+          <h3 className="text-sm font-bold text-[#191919] pb-3 border-b border-[#f3f2f0]">Job Market Allocation Splits</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Experience Level */}
+            <div className="flex flex-col items-center">
+              <p className="text-xs font-semibold text-[#5e5e5e] mb-2 self-start">Experience Allocation</p>
+              {experienceData.length > 0 ? (
+                <div className="h-48 w-full">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <PieChart>
+                      <Pie data={experienceData} innerRadius={45} outerRadius={60} paddingAngle={3} dataKey="value">
+                        {experienceData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: "10px" }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-xs text-[#5e5e5e] py-16">No data</p>
+              )}
+            </div>
+
+            {/* Work Type */}
+            <div className="flex flex-col items-center">
+              <p className="text-xs font-semibold text-[#5e5e5e] mb-2 self-start">Work Type Allocation</p>
+              {workTypeData.length > 0 ? (
+                <div className="h-48 w-full">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                    <PieChart>
+                      <Pie data={workTypeData} innerRadius={45} outerRadius={60} paddingAngle={3} dataKey="value">
+                        {workTypeData.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={COLORS[(index + 2) % COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip />
+                      <Legend verticalAlign="bottom" height={36} iconType="circle" wrapperStyle={{ fontSize: "10px" }} />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              ) : (
+                <p className="text-xs text-[#5e5e5e] py-16">No data</p>
+              )}
+            </div>
+          </div>
         </div>
       </section>
 
-      {/* Main Charts area */}
-      <section className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {/* Top Industries */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Top 6 Hiring Industries</h3>
-          <div className="h-80 w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={data.top_industries} margin={{ bottom: 20 }}>
-                <XAxis dataKey="industry_name" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} angle={-25} textAnchor="end" interval={0} />
-                <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                <Bar dataKey="job_count" fill="url(#colorIndigo)" radius={[4, 4, 0, 0]}>
-                  {data.top_industries.map((entry, index) => (
-                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                  ))}
-                </Bar>
-                <defs>
-                  <linearGradient id="colorIndigo" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.8} />
-                    <stop offset="95%" stopColor="#4f46e5" stopOpacity={0.2} />
-                  </linearGradient>
-                </defs>
-              </BarChart>
-            </ResponsiveContainer>
+      {/* RIGHT COLUMN: Trending Stats / News Widget */}
+      <aside className="lg:col-span-3 space-y-3">
+        {/* Remote Ratio Stat Box */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg p-4 shadow-sm">
+          <h3 className="text-xs font-bold text-[#191919] mb-3">Remote Operations index</h3>
+          <div className="space-y-2">
+            <div className="flex justify-between items-baseline">
+              <span className="text-2xl font-bold text-[#0a66c2]">{remoteRatio.toFixed(1)}%</span>
+              <span className="text-[10px] text-[#5e5e5e] font-semibold uppercase tracking-wider">Remote Allowed</span>
+            </div>
+            <div className="h-1.5 w-full bg-[#f3f2f0] rounded-full overflow-hidden">
+              <div className="h-full bg-[#0a66c2] rounded-full" style={{ width: `${remoteRatio}%` }} />
+            </div>
+            <p className="text-[11px] text-[#5e5e5e] mt-1">
+              Based on {remoteCount.toLocaleString()} remote listings out of {data.total_jobs.toLocaleString()} total postings.
+            </p>
           </div>
         </div>
 
-        {/* Mapped Skills Demand */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Top 10 Mapped Skills Demand</h3>
-          <div className="h-80 w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={data.top_skills} layout="vertical" margin={{ left: 20 }}>
-                <XAxis type="number" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                <YAxis dataKey="skill_name" type="category" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                <Bar dataKey="job_count" fill="#a855f7" radius={[0, 4, 4, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-      </section>
-
-      {/* Sub Distributions area */}
-      <section className="grid grid-cols-1 md:grid-cols-3 gap-8">
-        {/* Experience Levels */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col items-center min-w-0">
-          <h3 className="text-md font-semibold text-white mb-4 w-full text-left">Experience Level Allocation</h3>
-          {experienceData.length > 0 ? (
-            <div className="h-64 w-full flex items-center justify-center min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <PieChart>
-                  <Pie data={experienceData} innerRadius={60} outerRadius={80} paddingAngle={4} dataKey="value">
-                    {experienceData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="text-slate-500 text-sm py-20">No experience level data available.</div>
-          )}
-        </div>
-
-        {/* Work Types */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col items-center min-w-0">
-          <h3 className="text-md font-semibold text-white mb-4 w-full text-left">Work Types Distribution</h3>
-          {workTypeData.length > 0 ? (
-            <div className="h-64 w-full flex items-center justify-center min-w-0">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-                <PieChart>
-                  <Pie data={workTypeData} innerRadius={60} outerRadius={80} paddingAngle={4} dataKey="value">
-                    {workTypeData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[(index + 3) % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} />
-                  <Legend verticalAlign="bottom" height={36} iconType="circle" />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          ) : (
-            <div className="text-slate-500 text-sm py-20">No work type data available.</div>
-          )}
-        </div>
-
-
-        {/* Data Ingestion Splitting */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl flex flex-col">
-          <h3 className="text-md font-semibold text-white mb-4">Ingestion Data Splitting</h3>
-          <div className="flex-1 flex flex-col justify-center space-y-4">
-            {data.data_source_distribution.map((source, index) => {
+        {/* Data Source Splitting Widget */}
+        <div className="bg-white border border-[#e0e0e0] rounded-lg p-4 shadow-sm space-y-3">
+          <h3 className="text-xs font-bold text-[#191919] border-b border-[#f3f2f0] pb-2">Data Ingestion Splitting</h3>
+          <div className="space-y-3">
+            {data.data_source_distribution.map((source) => {
               const percentage = data.total_jobs > 0 ? (source.count / data.total_jobs) * 100 : 0;
               return (
                 <div key={source.data_source} className="space-y-1">
-                  <div className="flex justify-between text-sm">
-                    <span className="font-semibold text-slate-300">{source.data_source} Dataset</span>
-                    <span className="text-slate-400">
-                      {source.count.toLocaleString()} jobs ({percentage.toFixed(1)}%)
-                    </span>
+                  <div className="flex justify-between text-xs font-semibold">
+                    <span className="text-[#191919]">{source.data_source} Source</span>
+                    <span className="text-[#5e5e5e]">{percentage.toFixed(1)}%</span>
                   </div>
-                  <div className="h-2 w-full bg-slate-800 rounded-full overflow-hidden">
+                  <div className="h-1.5 w-full bg-[#f3f2f0] rounded-full overflow-hidden">
                     <div
-                      className="h-full rounded-full transition-all duration-500"
+                      className="h-full rounded-full"
                       style={{
-                        backgroundColor: source.data_source === "CSV" ? "#6366f1" : "#10b981",
+                        backgroundColor: source.data_source === "CSV" ? "#0a66c2" : "#00a0dc",
                         width: `${percentage}%`
                       }}
                     />
@@ -286,12 +366,9 @@ export default function DashboardPage() {
                 </div>
               );
             })}
-            {data.data_source_distribution.length === 0 && (
-              <div className="text-slate-500 text-sm py-12 text-center">No data source breakdown available.</div>
-            )}
           </div>
         </div>
-      </section>
+      </aside>
     </div>
   );
 }

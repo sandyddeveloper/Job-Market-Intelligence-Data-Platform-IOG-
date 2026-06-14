@@ -15,6 +15,7 @@ import {
   AreaChart,
   Area
 } from "recharts";
+import { TrendingUp, Users, Award, ShieldAlert, BarChart3, Building } from "lucide-react";
 
 interface DSTrend {
   work_year: number;
@@ -46,7 +47,7 @@ interface TopCompany {
   average_salary: string | null;
 }
 
-const COLORS = ["#6366f1", "#a855f7", "#ec4899", "#10b981", "#f59e0b", "#3b82f6"];
+const COLORS = ["#0a66c2", "#00a0dc", "#0073b1", "#33a0fc", "#70b5f9", "#b3dbff"];
 
 export default function BenchmarksPage() {
   const [dsTrends, setDsTrends] = useState<DSTrend[]>([]);
@@ -88,21 +89,17 @@ export default function BenchmarksPage() {
 
   if (loading) {
     return (
-      <div className="flex-1 bg-slate-950 p-8 space-y-6">
-        <header className="flex justify-between items-center pb-4 border-b border-slate-800">
-          <div className="h-8 w-64 bg-slate-800 rounded animate-pulse" />
-        </header>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div className="h-96 bg-slate-900 border border-slate-800 rounded-xl animate-pulse" />
-          <div className="h-96 bg-slate-900 border border-slate-800 rounded-xl animate-pulse" />
+      <div className="w-full max-w-6xl mx-auto space-y-6 animate-pulse">
+        <div className="h-12 bg-white border border-[#e0e0e0] rounded-lg" />
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="h-96 bg-white border border-[#e0e0e0] rounded-lg" />
+          <div className="h-96 bg-white border border-[#e0e0e0] rounded-lg" />
         </div>
       </div>
     );
   }
 
   // Format DS trends data for charts
-  // dsTrends is list of {work_year, experience_level, avg_salary_usd}
-  // Group by year: {year, EN: sal, MI: sal, SE: sal, EX: sal}
   const years = Array.from(new Set(dsTrends.map(d => d.work_year))).sort();
   const dsChartData = years.map(year => {
     const dataForYear = dsTrends.filter(d => d.work_year === year);
@@ -119,54 +116,61 @@ export default function BenchmarksPage() {
   });
 
   return (
-    <div className="p-8 space-y-8 bg-slate-950 min-h-screen">
+    <div className="space-y-6">
       {/* Header bar */}
-      <header className="pb-6 border-b border-slate-800">
-        <h1 className="text-3xl font-bold tracking-tight bg-gradient-to-r from-white via-slate-200 to-slate-400 bg-clip-text text-transparent">
-          Salary & Market Benchmarks
+      <div className="bg-white border border-[#e0e0e0] rounded-lg p-5 shadow-sm">
+        <h1 className="text-xl font-bold text-[#191919] flex items-center space-x-2">
+          <TrendingUp className="h-6 w-6 text-[#0a66c2]" />
+          <span>Salary & Market Benchmarks</span>
         </h1>
-        <p className="text-slate-400 text-sm mt-1">
-          Historical benchmark metrics compiled from global Data Science and Analyst reports compared against Adzuna vacancy tracking.
+        <p className="text-xs text-[#5e5e5e] mt-1.5 leading-relaxed">
+          Historical benchmark metrics compiled from global Data Science and Analyst reports compared against Adzuna vacancy tracking. Use these points to benchmark industry salary standards.
         </p>
-      </header>
+      </div>
 
       {/* Charts Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
         
         {/* Data Science Salary Trends */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Data Science Salaries over Years (USD)</h3>
+        <div className="bg-white border border-[#e0e0e0] p-5 rounded-lg shadow-sm">
+          <div className="flex items-center space-x-2 mb-4 border-b border-[#f3f2f0] pb-2">
+            <Award className="h-5 w-5 text-[#0a66c2]" />
+            <h3 className="text-sm font-bold text-[#191919]">Data Science Salaries over Years (USD)</h3>
+          </div>
           {dsChartData.length > 0 ? (
-            <div className="h-80 w-full min-w-0">
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <LineChart data={dsChartData}>
-                  <XAxis dataKey="year" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(tick) => `$${tick.toLocaleString()}`} />
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                  <Legend verticalAlign="top" height={36} iconType="circle" />
-                  <Line type="monotone" dataKey="Entry Level" stroke="#f59e0b" strokeWidth={2} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="Mid Level" stroke="#10b981" strokeWidth={2} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="Senior Level" stroke="#6366f1" strokeWidth={2} dot={{ r: 4 }} />
-                  <Line type="monotone" dataKey="Executive" stroke="#a855f7" strokeWidth={2} dot={{ r: 4 }} />
+                  <XAxis dataKey="year" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `$${tick.toLocaleString()}`} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Legend verticalAlign="top" height={36} iconType="circle" wrapperStyle={{ fontSize: "10px" }} />
+                  <Line type="monotone" dataKey="Entry Level" stroke="#70b5f9" strokeWidth={2} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="Mid Level" stroke="#00a0dc" strokeWidth={2} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="Senior Level" stroke="#0a66c2" strokeWidth={2} dot={{ r: 4 }} />
+                  <Line type="monotone" dataKey="Executive" stroke="#004182" strokeWidth={2} dot={{ r: 4 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-80 flex items-center justify-center text-slate-500">No Data Science benchmark records found.</div>
+            <div className="h-72 flex items-center justify-center text-xs text-[#5e5e5e]">No Data Science benchmark records found.</div>
           )}
         </div>
 
         {/* Data Analyst Sector Ratings */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Data Analyst Industry Sector Ratings</h3>
+        <div className="bg-white border border-[#e0e0e0] p-5 rounded-lg shadow-sm">
+          <div className="flex items-center space-x-2 mb-4 border-b border-[#f3f2f0] pb-2">
+            <Users className="h-5 w-5 text-[#0a66c2]" />
+            <h3 className="text-sm font-bold text-[#191919]">Data Analyst Industry Sector Ratings</h3>
+          </div>
           {daStats.length > 0 ? (
-            <div className="h-80 w-full min-w-0">
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={daStats} margin={{ bottom: 20 }}>
-                  <XAxis dataKey="sector" stroke="#64748b" fontSize={10} tickLine={false} axisLine={false} angle={-30} textAnchor="end" interval={0} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} domain={[0, 5]} />
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                  <Bar dataKey="avg_rating" fill="#a855f7" radius={[4, 4, 0, 0]}>
+                  <XAxis dataKey="sector" stroke="#5e5e5e" fontSize={9} tickLine={false} axisLine={false} angle={-25} textAnchor="end" interval={0} />
+                  <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} domain={[0, 5]} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Bar dataKey="avg_rating" fill="#0a66c2" radius={[3, 3, 0, 0]}>
                     {daStats.map((entry, index) => (
                       <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                     ))}
@@ -175,84 +179,98 @@ export default function BenchmarksPage() {
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-80 flex items-center justify-center text-slate-500">No Analyst ratings found.</div>
+            <div className="h-72 flex items-center justify-center text-xs text-[#5e5e5e]">No Analyst ratings found.</div>
           )}
         </div>
 
         {/* Adzuna MoM Salary History */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Adzuna MoM IT Jobs Average Salary (GBP)</h3>
+        <div className="bg-white border border-[#e0e0e0] p-5 rounded-lg shadow-sm">
+          <div className="flex items-center space-x-2 mb-4 border-b border-[#f3f2f0] pb-2">
+            <BarChart3 className="h-5 w-5 text-[#0a66c2]" />
+            <h3 className="text-sm font-bold text-[#191919]">Adzuna MoM IT Jobs Average Salary (GBP)</h3>
+          </div>
           {salaryHistory.length > 0 ? (
-            <div className="h-80 w-full min-w-0">
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <AreaChart data={salaryHistory}>
-                  <XAxis dataKey="month" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${tick.toLocaleString()}`} />
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                  <Area type="monotone" dataKey="avg_salary" stroke="#10b981" fillOpacity={0.1} fill="url(#colorEmerald)" strokeWidth={2} />
+                  <XAxis dataKey="month" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${tick.toLocaleString()}`} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Area type="monotone" dataKey="avg_salary" stroke="#0a66c2" fillOpacity={0.1} fill="url(#colorBlue)" strokeWidth={2} />
                   <defs>
-                    <linearGradient id="colorEmerald" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.0} />
+                    <linearGradient id="colorBlue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#0a66c2" stopOpacity={0.25} />
+                      <stop offset="95%" stopColor="#0a66c2" stopOpacity={0.0} />
                     </linearGradient>
                   </defs>
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-80 flex items-center justify-center text-slate-500">No MoM salary history found. Run API ingestion first.</div>
+            <div className="h-72 flex items-center justify-center text-xs text-[#5e5e5e] text-center p-6 bg-[#f9fafb] border border-dashed border-[#e0e0e0] rounded-[4px]">
+              <ShieldAlert className="h-8 w-8 text-amber-500 mb-2" />
+              <span>No MoM salary history found. Confirm your Adzuna App ID and App Key are active in Space secrets, then wait for your 12:40 PM cron trigger!</span>
+            </div>
           )}
         </div>
 
         {/* Adzuna Salary Bracket Histogram */}
-        <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl min-w-0">
-          <h3 className="text-lg font-semibold text-white mb-4">Adzuna Salary Brackets Vacancies (GBP)</h3>
+        <div className="bg-white border border-[#e0e0e0] p-5 rounded-lg shadow-sm">
+          <div className="flex items-center space-x-2 mb-4 border-b border-[#f3f2f0] pb-2">
+            <TrendingUp className="h-5 w-5 text-[#0a66c2]" />
+            <h3 className="text-sm font-bold text-[#191919]">Adzuna Salary Brackets Vacancies (GBP)</h3>
+          </div>
           {histogram.length > 0 ? (
-            <div className="h-80 w-full min-w-0">
+            <div className="h-72 w-full">
               <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
                 <BarChart data={histogram}>
-                  <XAxis dataKey="salary_bracket" stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${parseFloat(tick).toLocaleString()}`} />
-                  <YAxis stroke="#64748b" fontSize={11} tickLine={false} axisLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: "#0f172a", borderColor: "#334155", borderRadius: "8px" }} labelClassName="text-white" />
-                  <Bar dataKey="vacancy_count" fill="#3b82f6" radius={[4, 4, 0, 0]} />
+                  <XAxis dataKey="salary_bracket" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${parseFloat(tick).toLocaleString()}`} />
+                  <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
+                  <Tooltip contentStyle={{ backgroundColor: "#ffffff", borderColor: "#e0e0e0", borderRadius: "4px", fontSize: "11px" }} />
+                  <Bar dataKey="vacancy_count" fill="#00a0dc" radius={[3, 3, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="h-80 flex items-center justify-center text-slate-500">No vacancy distribution histogram found. Run API ingestion first.</div>
+            <div className="h-72 flex items-center justify-center text-xs text-[#5e5e5e] text-center p-6 bg-[#f9fafb] border border-dashed border-[#e0e0e0] rounded-[4px]">
+              <ShieldAlert className="h-8 w-8 text-amber-500 mb-2" />
+              <span>No vacancy distribution histogram found. Confirm your Adzuna API credentials are active!</span>
+            </div>
           )}
         </div>
 
       </div>
 
-
       {/* Standings Table area */}
-      <section className="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
-        <div className="mb-4">
-          <h3 className="text-lg font-semibold text-white">Top Standings hiring companies</h3>
-          <p className="text-slate-500 text-xs mt-1">Ranking of active employers by total job vacancies listed via Adzuna APIs.</p>
+      <section className="bg-white border border-[#e0e0e0] p-5 rounded-lg shadow-sm space-y-4">
+        <div className="border-b border-[#f3f2f0] pb-3">
+          <h3 className="text-sm font-bold text-[#191919] flex items-center space-x-2">
+            <Building className="h-5 w-5 text-[#0a66c2]" />
+            <span>Top Hiring Companies Standings</span>
+          </h3>
+          <p className="text-[#5e5e5e] text-xs mt-1">Ranking of active employers by total job vacancies listed via Adzuna APIs.</p>
         </div>
         
         {topCompanies.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-sm border-collapse">
+            <table className="w-full text-left text-xs border-collapse">
               <thead>
-                <tr className="border-b border-slate-800 text-slate-400 font-medium">
-                  <th className="py-3 px-4">Company Name</th>
-                  <th className="py-3 px-4">Active Vacancies</th>
-                  <th className="py-3 px-4">Average Offered Salary</th>
+                <tr className="border-b border-[#e0e0e0] text-[#5e5e5e] font-semibold bg-[#f9fafb]">
+                  <th className="py-2.5 px-4">Company Name</th>
+                  <th className="py-2.5 px-4">Active Vacancies</th>
+                  <th className="py-2.5 px-4">Average Offered Salary</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-800/60 text-slate-200">
+              <tbody className="divide-y divide-[#e0e0e0] text-[#191919] font-medium">
                 {topCompanies.map((company) => (
-                  <tr key={company.company_name} className="hover:bg-slate-800/20 transition-colors">
-                    <td className="py-3.5 px-4 font-semibold text-white">{company.company_name}</td>
-                    <td className="py-3.5 px-4">
-                      <span className="bg-indigo-500/10 text-indigo-400 font-semibold px-2.5 py-0.5 rounded border border-indigo-500/20">
-                        {company.vacancy_count} roles
+                  <tr key={company.company_name} className="hover:bg-[#f0f7ff]/40 transition-colors">
+                    <td className="py-3 px-4 font-bold text-[#0a66c2] hover:underline cursor-pointer">{company.company_name}</td>
+                    <td className="py-3 px-4">
+                      <span className="bg-[#e6f4ea] text-[#0f5132] font-semibold px-2.5 py-0.5 rounded-[4px] border border-[#d1e7dd]">
+                        {company.vacancy_count} roles active
                       </span>
                     </td>
-                    <td className="py-3.5 px-4 font-bold text-slate-300">
+                    <td className="py-3 px-4 font-bold text-[#191919]">
                       {company.average_salary
                         ? `£${parseFloat(company.average_salary).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
                         : "N/A"}
@@ -263,8 +281,8 @@ export default function BenchmarksPage() {
             </table>
           </div>
         ) : (
-          <div className="py-12 text-center text-slate-500 text-sm">
-            No top standings records found. Run API ingestion to gather standings data.
+          <div className="py-12 text-center text-[#5e5e5e] text-xs">
+            No top standings records found. Verify your Adzuna Space secrets to collect standings data.
           </div>
         )}
       </section>
