@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   LineChart,
   Line,
@@ -49,7 +50,7 @@ interface TopCompany {
 
 const COLORS = ["#0a66c2", "#00a0dc", "#0073b1", "#33a0fc", "#70b5f9", "#b3dbff"];
 
-export default function BenchmarksPage() {
+function BenchmarksPage() {
   const [dsTrends, setDsTrends] = useState<DSTrend[]>([]);
   const [daStats, setDaStats] = useState<DAStat[]>([]);
   const [salaryHistory, setSalaryHistory] = useState<SalaryHistory[]>([]);
@@ -139,7 +140,7 @@ export default function BenchmarksPage() {
           </div>
           {dsChartData.length > 0 ? (
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+              <ResponsiveContainer id="ds-salary-chart" width="100%" height="100%">
                 <LineChart data={dsChartData}>
                   <XAxis dataKey="year" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
                   <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `$${tick.toLocaleString()}`} />
@@ -165,7 +166,7 @@ export default function BenchmarksPage() {
           </div>
           {daStats.length > 0 ? (
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+              <ResponsiveContainer id="da-sector-chart" width="100%" height="100%">
                 <BarChart data={daStats} margin={{ bottom: 20 }}>
                   <XAxis dataKey="sector" stroke="#5e5e5e" fontSize={9} tickLine={false} axisLine={false} angle={-25} textAnchor="end" interval={0} />
                   <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} domain={[0, 5]} />
@@ -191,7 +192,7 @@ export default function BenchmarksPage() {
           </div>
           {salaryHistory.length > 0 ? (
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+              <ResponsiveContainer id="adzuna-salary-history-chart" width="100%" height="100%">
                 <AreaChart data={salaryHistory}>
                   <XAxis dataKey="month" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
                   <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${tick.toLocaleString()}`} />
@@ -222,7 +223,7 @@ export default function BenchmarksPage() {
           </div>
           {histogram.length > 0 ? (
             <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+              <ResponsiveContainer id="adzuna-salary-brackets-chart" width="100%" height="100%">
                 <BarChart data={histogram}>
                   <XAxis dataKey="salary_bracket" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(tick) => `£${parseFloat(tick).toLocaleString()}`} />
                   <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
@@ -289,3 +290,6 @@ export default function BenchmarksPage() {
     </div>
   );
 }
+
+export default dynamic(() => Promise.resolve(BenchmarksPage), { ssr: false });
+

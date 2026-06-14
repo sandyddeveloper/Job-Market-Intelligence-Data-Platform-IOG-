@@ -39,6 +39,34 @@ generate_deterministic_id = JobDataProcessor.generate_deterministic_id
 calculate_average_salary = JobDataProcessor.calculate_average_salary
 
 
+def clean_records(df: pd.DataFrame, columns: list = None) -> list:
+    records = df[columns].to_dict('records') if columns is not None else df.to_dict('records')
+    return [{k: (None if pd.isna(v) else v) for k, v in row.items()} for row in records]
+
+
+def resolve_company_ids(names) -> dict:
+    from django.db.models.functions import Lower
+    from apps.company.models import Company
+    
+    names_clean = [str(n).strip() for n in names if n and not pd.isna(n)]
+    if not names_clean:
+        return {}
+        
+    lower_names = list({n.lower() for n in names_clean})
+    
+    existing_companies = Company.objects.annotate(name_lower=Lower('name')).filter(name_lower__in=lower_names)
+    name_to_id = {c.name.lower().strip(): c.company_id for c in existing_companies}
+    
+    for name in names_clean:
+        name_key = name.lower()
+        if name_key not in name_to_id:
+            name_to_id[name_key] = generate_deterministic_id(name)
+            
+    return name_to_id
+
+
+
+
 # ---------------------------------------------------------
 # CSV ETL Pipeline Class
 # ---------------------------------------------------------
@@ -176,7 +204,7 @@ class CSVETLPipeline:
             self.loaded_industry_ids.update(chunk['industry_id_clean'].tolist())
             
             chunk = chunk.rename(columns={'industry_id_clean': 'industry_id', 'industry_name_clean': 'industry_name'})
-            records = [Industry(**row) for row in chunk[['industry_id', 'industry_name']].to_dict('records')]
+            records = [Industry(**row) for row in clean_records(chunk, ['industry_id', 'industry_name'])]
             
             Industry.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_industry_ids)} industries.")
@@ -204,7 +232,7 @@ class CSVETLPipeline:
             self.loaded_skill_abrs.update(chunk['skill_abr_clean'].tolist())
             
             chunk = chunk.rename(columns={'skill_abr_clean': 'skill_abr', 'skill_name_clean': 'skill_name'})
-            records = [Skill(**row) for row in chunk[['skill_abr', 'skill_name']].to_dict('records')]
+            records = [Skill(**row) for row in clean_records(chunk, ['skill_abr', 'skill_name'])]
             
             Skill.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_skill_abrs)} skills.")
@@ -243,7 +271,7 @@ class CSVETLPipeline:
             company_df['address'] = chunk['address'].map(parse_str) if 'address' in chunk.columns else None
             company_df['url'] = chunk['url'].map(lambda x: parse_str(x, 500)) if 'url' in chunk.columns else None
             
-            records = [Company(**row) for row in company_df.to_dict('records')]
+            records = [Company(**row) for row in clean_records(company_df)]
             
             Company.objects.bulk_create(
                 records,
@@ -278,7 +306,7 @@ class CSVETLPipeline:
             seen.update(chunk['key'].tolist())
             
             chunk = chunk.rename(columns={'company_id_clean': 'company_id', 'industry_clean': 'industry'})
-            records = [CompanyIndustry(**row) for row in chunk[['company_id', 'industry']].to_dict('records')]
+            records = [CompanyIndustry(**row) for row in clean_records(chunk, ['company_id', 'industry'])]
             
             CompanyIndustry.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} company-industry mappings.")
@@ -308,7 +336,7 @@ class CSVETLPipeline:
             seen.update(chunk['key'].tolist())
             
             chunk = chunk.rename(columns={'company_id_clean': 'company_id', 'speciality_clean': 'speciality'})
-            records = [CompanySpecialty(**row) for row in chunk[['company_id', 'speciality']].to_dict('records')]
+            records = [CompanySpecialty(**row) for row in clean_records(chunk, ['company_id', 'speciality'])]
             
             CompanySpecialty.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} company specialties.")
@@ -344,7 +372,7 @@ class CSVETLPipeline:
                 'time_recorded_clean': 'time_recorded'
             })
             
-            records = [EmployeeCountHistory(**row) for row in chunk[['company_id', 'employee_count', 'follower_count', 'time_recorded']].to_dict('records')]
+            records = [EmployeeCountHistory(**row) for row in clean_records(chunk, ['company_id', 'employee_count', 'follower_count', 'time_recorded'])]
             
             EmployeeCountHistory.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} employee count entries.")
@@ -411,7 +439,7 @@ class CSVETLPipeline:
             job_fields['company_id'] = raw_company_ids.where(raw_company_ids.isin(self.loaded_company_ids), None)
             
             job_df = pd.DataFrame(job_fields)
-            records = [JobPosting(**row) for row in job_df.to_dict('records')]
+            records = [JobPosting(**row) for row in clean_records(job_df)]
             
             JobPosting.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_job_ids)} job postings.")
@@ -443,7 +471,7 @@ class CSVETLPipeline:
             chunk = chunk.rename(columns={'job_id_clean': 'jobposting_id', 'skill_id_clean': 'skill_id'})
             records = [
                 JobPosting.skills.through(**row)
-                for row in chunk[['jobposting_id', 'skill_id']].to_dict('records')
+                for row in clean_records(chunk, ['jobposting_id', 'skill_id'])
             ]
             
             JobPosting.skills.through.objects.bulk_create(records, ignore_conflicts=True)
@@ -476,7 +504,7 @@ class CSVETLPipeline:
             chunk = chunk.rename(columns={'job_id_clean': 'jobposting_id', 'industry_id_clean': 'industry_id'})
             records = [
                 JobPosting.industries.through(**row)
-                for row in chunk[['jobposting_id', 'industry_id']].to_dict('records')
+                for row in clean_records(chunk, ['jobposting_id', 'industry_id'])
             ]
             
             JobPosting.industries.through.objects.bulk_create(records, ignore_conflicts=True)
@@ -510,7 +538,7 @@ class CSVETLPipeline:
                 'inferred': chunk.get('inferred', pd.Series(dtype=str, index=chunk.index)).map(parse_bool)
             })
             
-            records = [Benefit(**row) for row in benefit_df.to_dict('records')]
+            records = [Benefit(**row) for row in clean_records(benefit_df)]
             Benefit.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} benefit entries.")
 
@@ -548,7 +576,7 @@ class CSVETLPipeline:
                 'compensation_type': chunk.get('compensation_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50))
             })
             
-            records = [JobSalaryDetail(**row) for row in salary_df.to_dict('records')]
+            records = [JobSalaryDetail(**row) for row in clean_records(salary_df)]
             JobSalaryDetail.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen_salaries)} salary entries.")
 
@@ -593,12 +621,15 @@ class CSVETLPipeline:
             
             # Resolve companies
             unique_companies = chunk['company_name_clean'].dropna().unique()
+            name_to_id = {}
             if len(unique_companies) > 0:
+                name_to_id = resolve_company_ids(unique_companies)
                 companies_df = pd.DataFrame({'name': unique_companies})
-                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['company_id'] = companies_df['name'].map(lambda x: name_to_id.get(x.lower()))
+                companies_df = companies_df.drop_duplicates(subset=['company_id'])
                 companies_df['data_source'] = 'CSV'
                 
-                companies_to_create = [Company(**row) for row in companies_df.to_dict('records')]
+                companies_to_create = [Company(**row) for row in clean_records(companies_df)]
                 Company.objects.bulk_create(
                     companies_to_create,
                     update_conflicts=True,
@@ -613,12 +644,13 @@ class CSVETLPipeline:
             if new_industries:
                 ind_df = pd.DataFrame({'industry_name': new_industries})
                 ind_df['industry_id'] = ind_df['industry_name'].map(lambda x: generate_deterministic_id(x.lower().strip()))
+                ind_df = ind_df.drop_duplicates(subset=['industry_id'])
                 
                 existing_pks = set(Industry.objects.filter(industry_id__in=ind_df['industry_id'].tolist()).values_list('industry_id', flat=True))
                 ind_df = ind_df[~ind_df['industry_id'].isin(existing_pks)]
                 
                 if not ind_df.empty:
-                    industries_to_create = [Industry(**row) for row in ind_df.to_dict('records')]
+                    industries_to_create = [Industry(**row) for row in clean_records(ind_df)]
                     Industry.objects.bulk_create(industries_to_create, ignore_conflicts=True)
                     
                 # Update industry_map
@@ -631,7 +663,7 @@ class CSVETLPipeline:
                 'job_description': chunk.get('Job Description', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
                 'rating': chunk.get('Rating', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
                 'company_name': chunk['company_name_raw'],
-                'company_id': chunk['company_name_clean'].map(lambda x: generate_deterministic_id(x) if x else None),
+                'company_id': chunk['company_name_clean'].map(lambda x: name_to_id.get(x.lower()) if x else None),
                 'location': chunk.get('Location', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
                 'headquarters': chunk.get('Headquarters', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
                 'size': chunk.get('Size', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
@@ -645,7 +677,7 @@ class CSVETLPipeline:
                 'easy_apply': chunk.get('Easy Apply', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 20)),
             })
             
-            records = [DataAnalystBenchmark(**row) for row in benchmark_df.to_dict('records')]
+            records = [DataAnalystBenchmark(**row) for row in clean_records(benchmark_df)]
             DataAnalystBenchmark.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} Data Analyst benchmark records.")
 
@@ -686,7 +718,7 @@ class CSVETLPipeline:
                 'company_size': chunk.get('company_size', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 3) or '')
             })
             
-            records = [DataScienceSalaryBenchmark(**row) for row in benchmark_df.to_dict('records')]
+            records = [DataScienceSalaryBenchmark(**row) for row in clean_records(benchmark_df)]
             DataScienceSalaryBenchmark.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} Data Science benchmark records.")
 
@@ -749,7 +781,7 @@ class AdzunaAPIIngestionPipeline:
             cat_df = cat_df.rename(columns={'label_clean': 'industry_name'})
             industries = [
                 Industry(**row)
-                for row in cat_df[['industry_id', 'industry_name']].to_dict('records')
+                for row in clean_records(cat_df, ['industry_id', 'industry_name'])
             ]
             Industry.objects.bulk_create(industries, ignore_conflicts=True)
         except Exception as e:
@@ -799,12 +831,15 @@ class AdzunaAPIIngestionPipeline:
             job_df['company_name_clean'] = company_names
             
             unique_company_names = job_df['company_name_clean'].dropna().unique()
+            company_name_to_id = {}
             if len(unique_company_names) > 0:
+                company_name_to_id = resolve_company_ids(unique_company_names)
                 companies_df = pd.DataFrame({'name': unique_company_names})
-                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['company_id'] = companies_df['name'].map(lambda x: company_name_to_id.get(x.lower()))
+                companies_df = companies_df.drop_duplicates(subset=['company_id'])
                 companies_df['data_source'] = 'API'
                 
-                companies_to_upsert = [Company(**row) for row in companies_df.to_dict('records')]
+                companies_to_upsert = [Company(**row) for row in clean_records(companies_df)]
                 Company.objects.bulk_create(
                     companies_to_upsert,
                     update_conflicts=True,
@@ -813,8 +848,7 @@ class AdzunaAPIIngestionPipeline:
                 )
                 self.companies_created += len(companies_to_upsert)
             
-            company_name_to_id = {name: generate_deterministic_id(name) for name in unique_company_names}
-            job_df['company_id_resolved'] = job_df['company_name_clean'].map(lambda x: company_name_to_id.get(x) if x else None)
+            job_df['company_id_resolved'] = job_df['company_name_clean'].map(lambda x: company_name_to_id.get(x.lower()) if x else None)
             
             # Times
             def parse_created_time(created_str):
@@ -873,7 +907,7 @@ class AdzunaAPIIngestionPipeline:
             })
             
             # Convert to dict and bulk create
-            job_postings = [JobPosting(**row) for row in job_df_for_db.to_dict('records')]
+            job_postings = [JobPosting(**row) for row in clean_records(job_df_for_db)]
             JobPosting.objects.bulk_create(job_postings, ignore_conflicts=True)
             self.jobs_created += len(job_postings)
         except Exception as e:
@@ -907,7 +941,8 @@ class AdzunaAPIIngestionPipeline:
             if hist_df.empty:
                 return
                 
-            hist_df = hist_df.rename(columns={'month_clean': 'month', 'avg_salary_clean': 'average_salary'})
+            # Drop original columns before renaming to prevent duplicate column names
+            hist_df = hist_df.drop(columns=['month', 'average_salary']).rename(columns={'month_clean': 'month', 'avg_salary_clean': 'average_salary'})
             hist_df['country'] = country
             hist_df['category'] = it_tag
             hist_df['category_ref'] = category_ref
@@ -915,7 +950,7 @@ class AdzunaAPIIngestionPipeline:
             
             hist_records = [
                 APISalaryHistory(**row)
-                for row in hist_df[['country', 'location', 'category', 'month', 'category_ref', 'average_salary']].to_dict('records')
+                for row in clean_records(hist_df, ['country', 'location', 'category', 'month', 'category_ref', 'average_salary'])
             ]
             APISalaryHistory.objects.bulk_create(hist_records, ignore_conflicts=True)
             self.histories_created += len(hist_records)
@@ -953,7 +988,7 @@ class AdzunaAPIIngestionPipeline:
             
             histogram_records = [
                 APISalaryHistogram(**row)
-                for row in histogram_df[['country', 'location', 'what', 'salary_bracket', 'vacancy_count']].to_dict('records')
+                for row in clean_records(histogram_df, ['country', 'location', 'what', 'salary_bracket', 'vacancy_count'])
             ]
             APISalaryHistogram.objects.bulk_create(histogram_records, ignore_conflicts=True)
             self.histograms_created += len(histogram_records)
@@ -978,12 +1013,15 @@ class AdzunaAPIIngestionPipeline:
                 return
                 
             unique_top_companies = top_df['comp_name_clean'].dropna().unique()
+            company_name_to_id = {}
             if len(unique_top_companies) > 0:
+                company_name_to_id = resolve_company_ids(unique_top_companies)
                 companies_df = pd.DataFrame({'name': unique_top_companies})
-                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['company_id'] = companies_df['name'].map(lambda x: company_name_to_id.get(x.lower()))
+                companies_df = companies_df.drop_duplicates(subset=['company_id'])
                 companies_df['data_source'] = 'API'
                 
-                companies_to_upsert = [Company(**row) for row in companies_df.to_dict('records')]
+                companies_to_upsert = [Company(**row) for row in clean_records(companies_df)]
                 Company.objects.bulk_create(
                     companies_to_upsert,
                     update_conflicts=True,
@@ -992,7 +1030,7 @@ class AdzunaAPIIngestionPipeline:
                 )
                 self.companies_created += len(companies_to_upsert)
                 
-            company_objs = {co.name.lower(): co for co in Company.objects.filter(name__in=unique_top_companies)}
+            company_objs = {co.name.lower().strip(): co for co in Company.objects.filter(name__in=unique_top_companies)}
             
             existing_entries = set(
                 APITopCompany.objects.filter(country=country, what="data engineer", company_name__in=list(unique_top_companies))
@@ -1005,7 +1043,9 @@ class AdzunaAPIIngestionPipeline:
                 
             top_df['company_id_resolved'] = top_df['comp_name_clean'].map(lambda name: company_objs.get(name.lower()))
             
-            top_df = top_df.rename(columns={
+            # Drop original columns before renaming to prevent duplicate column names
+            cols_to_drop = [col for col in ['company_name', 'company', 'vacancy_count', 'average_salary'] if col in top_df.columns]
+            top_df = top_df.drop(columns=cols_to_drop).rename(columns={
                 'comp_name_clean': 'company_name',
                 'company_id_resolved': 'company',
                 'comp_count_clean': 'vacancy_count',
@@ -1016,7 +1056,7 @@ class AdzunaAPIIngestionPipeline:
             
             top_records = [
                 APITopCompany(**row)
-                for row in top_df[['country', 'what', 'company_name', 'company', 'vacancy_count', 'average_salary']].to_dict('records')
+                for row in clean_records(top_df, ['country', 'what', 'company_name', 'company', 'vacancy_count', 'average_salary'])
             ]
             APITopCompany.objects.bulk_create(top_records, ignore_conflicts=True)
             self.top_companies_created += len(top_records)

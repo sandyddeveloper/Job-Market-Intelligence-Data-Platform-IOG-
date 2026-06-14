@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   BarChart,
   Bar,
@@ -43,7 +44,7 @@ interface OverviewData {
 
 const COLORS = ["#0a66c2", "#00a0dc", "#0073b1", "#33a0fc", "#70b5f9", "#b3dbff"];
 
-export default function DashboardPage() {
+function DashboardPage() {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -206,7 +207,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* FEED CARD 1: Top Hiring Industries (Recharts BarChart) */}
+        {/* FEED CARD 1: Top Hiring Industries */}
         <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm">
           <div className="p-4 flex justify-between items-start">
             <div className="flex space-x-2">
@@ -226,8 +227,8 @@ export default function DashboardPage() {
             Here are the top hiring sectors based on our total indexed job posting entries. The business services, tech, and engineering sectors show the highest job posting density.
           </div>
           <div className="p-4 border-t border-[#f3f2f0] min-w-0">
-            <div className="h-72 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <div className="h-72 w-full relative">
+              <ResponsiveContainer id="industry-demand-chart" width="100%" height="100%">
                 <BarChart data={data.top_industries} margin={{ bottom: 20 }}>
                   <XAxis dataKey="industry_name" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} angle={-20} textAnchor="end" interval={0} />
                   <YAxis stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
@@ -239,7 +240,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* FEED CARD 2: Mapped Skills Demand (Recharts BarChart) */}
+        {/* FEED CARD 2: Mapped Skills Demand */}
         <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm">
           <div className="p-4 flex justify-between items-start">
             <div className="flex space-x-2">
@@ -259,8 +260,8 @@ export default function DashboardPage() {
             This graph highlights the relative frequency of technical skills requested across all job descriptions. Core languages like Python, SQL, and AWS infrastructure command the highest representation.
           </div>
           <div className="p-4 border-t border-[#f3f2f0] min-w-0">
-            <div className="h-80 w-full">
-              <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+            <div className="h-80 w-full relative">
+              <ResponsiveContainer id="skills-demand-chart" width="100%" height="100%">
                 <BarChart data={data.top_skills} layout="vertical" margin={{ left: 10 }}>
                   <XAxis type="number" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
                   <YAxis dataKey="skill_name" type="category" stroke="#5e5e5e" fontSize={10} tickLine={false} axisLine={false} />
@@ -272,7 +273,7 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* FEED CARD 3: Allocation Splits (Pie Charts) */}
+        {/* FEED CARD 3: Allocation Splits */}
         <div className="bg-white border border-[#e0e0e0] rounded-lg shadow-sm p-4 space-y-4">
           <h3 className="text-sm font-bold text-[#191919] pb-3 border-b border-[#f3f2f0]">Job Market Allocation Splits</h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -280,8 +281,8 @@ export default function DashboardPage() {
             <div className="flex flex-col items-center">
               <p className="text-xs font-semibold text-[#5e5e5e] mb-2 self-start">Experience Allocation</p>
               {experienceData.length > 0 ? (
-                <div className="h-48 w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <div className="h-48 w-full relative">
+                  <ResponsiveContainer id="experience-allocation-chart" width="100%" height="100%">
                     <PieChart>
                       <Pie data={experienceData} innerRadius={45} outerRadius={60} paddingAngle={3} dataKey="value">
                         {experienceData.map((entry, index) => (
@@ -302,8 +303,8 @@ export default function DashboardPage() {
             <div className="flex flex-col items-center">
               <p className="text-xs font-semibold text-[#5e5e5e] mb-2 self-start">Work Type Allocation</p>
               {workTypeData.length > 0 ? (
-                <div className="h-48 w-full">
-                  <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+                <div className="h-48 w-full relative">
+                  <ResponsiveContainer id="worktype-allocation-chart" width="100%" height="100%">
                     <PieChart>
                       <Pie data={workTypeData} innerRadius={45} outerRadius={60} paddingAngle={3} dataKey="value">
                         {workTypeData.map((entry, index) => (
@@ -372,3 +373,6 @@ export default function DashboardPage() {
     </div>
   );
 }
+
+// Disable SSR to prevent Recharts -1 size rendering warning during pre-render
+export default dynamic(() => Promise.resolve(DashboardPage), { ssr: false });
