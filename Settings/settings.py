@@ -244,11 +244,11 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     'run-etl-monthly-on-day-1': {
         'task': 'core.tasks.run_etl_pipeline',
-        'schedule': crontab(hour=12, minute=50),
+        'schedule': crontab(hour=2, minute=10),
     },
     'run-adzuna-ingestion-daily-1am': {
         'task': 'core.tasks.run_adzuna_ingestion',
-        'schedule': crontab(hour=12, minute=50),
+        'schedule': crontab(hour=2, minute=10),
     },
 }
 
