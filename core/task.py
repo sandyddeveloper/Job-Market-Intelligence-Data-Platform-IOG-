@@ -59,9 +59,80 @@ class CSVETLPipeline:
         """Resolve base path to raw CSV datasets."""
         return self.base_dir / relative_path
 
+    def _download_file(self, url: str, dest_path: Path) -> None:
+        """Download a file from an HTTP(S) URL, with support for large Google Drive files."""
+        import requests
+        session = requests.Session()
+        
+        # Check if Google Drive link
+        if "drive.google.com" in url or "docs.google.com" in url:
+            file_id = None
+            if "id=" in url:
+                file_id = url.split("id=")[1].split("&")[0]
+            elif "/d/" in url:
+                file_id = url.split("/d/")[1].split("/")[0]
+                
+            if file_id:
+                confirm_url = "https://docs.google.com/uc?export=download"
+                params = {'id': file_id}
+                response = session.get(confirm_url, params=params, stream=True)
+                
+                # Check for confirmation token in cookies
+                token = None
+                for key, value in response.cookies.items():
+                    if key.startswith('download_warning'):
+                        token = value
+                        break
+                        
+                if token:
+                    params['confirm'] = token
+                    response = session.get(confirm_url, params=params, stream=True)
+            else:
+                response = session.get(url, stream=True)
+        else:
+            response = session.get(url, stream=True)
+            
+        response.raise_for_status()
+        
+        with open(dest_path, 'wb') as f:
+            for chunk in response.iter_content(chunk_size=8192):
+                if chunk:
+                    f.write(chunk)
+
+    def _download_and_extract_raw_data(self) -> None:
+        """Download raw data zip file from environment variable if local files are missing."""
+        import os
+        zip_url = os.getenv('RAW_DATA_ZIP_URL')
+        if not zip_url:
+            print("No RAW_DATA_ZIP_URL environment variable configured. Skipping dynamic download.")
+            return
+
+        print(f"Downloading raw dataset zip from {zip_url}...")
+        temp_zip = Path(settings.BASE_DIR) / 'core' / 'data' / 'raw_data.zip'
+        temp_zip.parent.mkdir(parents=True, exist_ok=True)
+        
+        try:
+            self._download_file(zip_url, temp_zip)
+            print("Download completed. Extracting raw dataset zip...")
+            
+            import zipfile
+            with zipfile.ZipFile(temp_zip, 'r') as zip_ref:
+                zip_ref.extractall(self.base_dir)
+                
+            print(f"Extraction successful! Raw datasets extracted to {self.base_dir}")
+            
+            # Clean up zip
+            if temp_zip.exists():
+                temp_zip.unlink()
+        except Exception as e:
+            logger.error(f"Failed to download and extract raw data zip: {e}", exc_info=True)
+            if temp_zip.exists():
+                temp_zip.unlink()
+
     def run(self) -> None:
         """Execute all CSV data loading pipelines sequentially."""
         print("Starting ETL pipeline execution...")
+        self._download_and_extract_raw_data()
         
         try:
             self.load_industries()
