@@ -1,7 +1,7 @@
-import csv
 import logging
 from pathlib import Path
-from decimal import Decimal
+from datetime import datetime
+from typing import Set, Any 
 import pandas as pd
 from django.conf import settings
 from celery import shared_task
@@ -16,71 +16,51 @@ def print(*args, **kwargs):
 
 from apps.company.models import Company, CompanyIndustry, CompanySpecialty, EmployeeCountHistory
 from apps.jobs.models import Industry, Skill, JobPosting, Benefit, JobSalaryDetail
-from apps.benchmarks.models import DataAnalystBenchmark, DataScienceSalaryBenchmark
+from apps.benchmarks.models import (
+    DataAnalystBenchmark, DataScienceSalaryBenchmark,
+    APISalaryHistory, APISalaryHistogram, APITopCompany, APISalaryPrediction
+)
+
+# ---------------------------------------------------------
+# Import Calculations, Parsers, & Enrichment Logic Class
+# ---------------------------------------------------------
+from core.logic import JobDataProcessor
+
+parse_str = JobDataProcessor.parse_str
+parse_int = JobDataProcessor.parse_int
+parse_decimal = JobDataProcessor.parse_decimal
+parse_bool = JobDataProcessor.parse_bool
+clean_html_text = JobDataProcessor.clean_html_text
+infer_remote_allowed = JobDataProcessor.infer_remote_allowed
+infer_work_type = JobDataProcessor.infer_work_type
+infer_experience_level = JobDataProcessor.infer_experience_level
+normalize_api_salary = JobDataProcessor.normalize_api_salary
+generate_deterministic_id = JobDataProcessor.generate_deterministic_id
+calculate_average_salary = JobDataProcessor.calculate_average_salary
 
 
 # ---------------------------------------------------------
-# Safe Helper Parsers to Sanitise and Clean Data
-# ---------------------------------------------------------
-def parse_str(val, max_length=None):
-    if val is None or pd.isna(val):
-        return None
-    val_stripped = str(val).strip()
-    if val_stripped.lower() in ('nan', 'null', 'none', ''):
-        return None
-    if max_length is not None:
-        return val_stripped[:max_length]
-    return val_stripped
-
-
-def parse_int(val):
-    clean_val = parse_str(val)
-    if clean_val is None:
-        return None
-    try:
-        # float(clean_val) handle cases like "2.0"
-        return int(float(clean_val))
-    except (ValueError, TypeError):
-        return None
-
-
-def parse_decimal(val):
-    clean_val = parse_str(val)
-    if clean_val is None:
-        return None
-    try:
-        return Decimal(clean_val)
-    except (ValueError, TypeError, Exception):
-        return None
-
-
-def parse_bool(val):
-    clean_val = parse_str(val)
-    if clean_val is None:
-        return None
-    return clean_val.lower() in ('true', '1', 'yes', 'y', 't')
-
-
-# ---------------------------------------------------------
-# Core ETL Pipeline Class
+# CSV ETL Pipeline Class
 # ---------------------------------------------------------
 class CSVETLPipeline:
     """ETL Pipeline to process Job Market datasets from raw CSVs to DB."""
 
-    def __init__(self, chunk_size=2000):
+    def __init__(self, chunk_size: int = 2000):
         self.chunk_size = chunk_size
         self.base_dir = Path(settings.BASE_DIR) / 'core' / 'data' / 'raw'
         
         # Track inserted Primary Keys to prevent DB constraint errors
-        self.loaded_industry_ids = set()
-        self.loaded_skill_abrs = set()
-        self.loaded_company_ids = set()
-        self.loaded_job_ids = set()
+        self.loaded_industry_ids: Set[int] = set()
+        self.loaded_skill_abrs: Set[str] = set()
+        self.loaded_company_ids: Set[int] = set()
+        self.loaded_job_ids: Set[int] = set()
 
-    def get_csv_path(self, relative_path):
+    def get_csv_path(self, relative_path: str) -> Path:
+        """Resolve base path to raw CSV datasets."""
         return self.base_dir / relative_path
 
-    def run(self):
+    def run(self) -> None:
+        """Execute all CSV data loading pipelines sequentially."""
         print("Starting ETL pipeline execution...")
         
         try:
@@ -103,7 +83,8 @@ class CSVETLPipeline:
             raise e
 
     # 1. Load Industries
-    def load_industries(self):
+    def load_industries(self) -> None:
+        """Parse and load industry records in chunks."""
         csv_path = self.get_csv_path('info/industries.csv')
         if not csv_path.exists():
             print(f"Skipping Industries: file not found at {csv_path}")
@@ -111,8 +92,8 @@ class CSVETLPipeline:
         
         print("Loading Industries...")
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['industry_id_clean'] = chunk['industry_id'].apply(lambda x: parse_int(x))
-            chunk['industry_name_clean'] = chunk['industry_name'].apply(lambda x: parse_str(x, 255))
+            chunk['industry_id_clean'] = chunk['industry_id'].map(parse_int)
+            chunk['industry_name_clean'] = chunk['industry_name'].map(lambda x: parse_str(x, 255))
             
             chunk = chunk.dropna(subset=['industry_id_clean', 'industry_name_clean'])
             chunk = chunk.drop_duplicates(subset=['industry_id_clean'])
@@ -123,16 +104,15 @@ class CSVETLPipeline:
                 
             self.loaded_industry_ids.update(chunk['industry_id_clean'].tolist())
             
-            records = chunk.apply(lambda row: Industry(
-                industry_id=row['industry_id_clean'],
-                industry_name=row['industry_name_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'industry_id_clean': 'industry_id', 'industry_name_clean': 'industry_name'})
+            records = [Industry(**row) for row in chunk[['industry_id', 'industry_name']].to_dict('records')]
             
             Industry.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_industry_ids)} industries.")
 
     # 2. Load Skills
-    def load_skills(self):
+    def load_skills(self) -> None:
+        """Parse and load skill references in chunks."""
         csv_path = self.get_csv_path('info/skills.csv')
         if not csv_path.exists():
             print(f"Skipping Skills: file not found at {csv_path}")
@@ -140,8 +120,8 @@ class CSVETLPipeline:
         
         print("Loading Skills...")
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['skill_abr_clean'] = chunk['skill_abr'].apply(lambda x: parse_str(x, 10))
-            chunk['skill_name_clean'] = chunk['skill_name'].apply(lambda x: parse_str(x, 150))
+            chunk['skill_abr_clean'] = chunk['skill_abr'].map(lambda x: parse_str(x, 10))
+            chunk['skill_name_clean'] = chunk['skill_name'].map(lambda x: parse_str(x, 150))
             
             chunk = chunk.dropna(subset=['skill_abr_clean', 'skill_name_clean'])
             chunk = chunk.drop_duplicates(subset=['skill_abr_clean'])
@@ -152,16 +132,15 @@ class CSVETLPipeline:
                 
             self.loaded_skill_abrs.update(chunk['skill_abr_clean'].tolist())
             
-            records = chunk.apply(lambda row: Skill(
-                skill_abr=row['skill_abr_clean'],
-                skill_name=row['skill_name_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'skill_abr_clean': 'skill_abr', 'skill_name_clean': 'skill_name'})
+            records = [Skill(**row) for row in chunk[['skill_abr', 'skill_name']].to_dict('records')]
             
             Skill.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_skill_abrs)} skills.")
 
     # 3. Load Companies
-    def load_companies(self):
+    def load_companies(self) -> None:
+        """Parse and load company profiles in chunks, using conflict-resolution updates."""
         csv_path = self.get_csv_path('companies/companies.csv')
         if not csv_path.exists():
             print(f"Skipping Companies: file not found at {csv_path}")
@@ -169,8 +148,8 @@ class CSVETLPipeline:
         
         print("Loading Companies...")
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['company_id_clean'] = chunk['company_id'].apply(lambda x: parse_int(x))
-            chunk['name_clean'] = chunk['name'].apply(lambda x: parse_str(x, 255))
+            chunk['company_id_clean'] = chunk['company_id'].map(parse_int)
+            chunk['name_clean'] = chunk['name'].map(lambda x: parse_str(x, 255))
             
             chunk = chunk.dropna(subset=['company_id_clean', 'name_clean'])
             chunk = chunk.drop_duplicates(subset=['company_id_clean'])
@@ -181,24 +160,31 @@ class CSVETLPipeline:
                 
             self.loaded_company_ids.update(chunk['company_id_clean'].tolist())
             
-            records = chunk.apply(lambda row: Company(
-                company_id=row['company_id_clean'],
-                name=row['name_clean'],
-                description=parse_str(row.get('description')),
-                company_size=parse_int(row.get('company_size')),
-                state=parse_str(row.get('state'), 100),
-                country=parse_str(row.get('country'), 100),
-                city=parse_str(row.get('city'), 255),
-                zip_code=parse_str(row.get('zip_code'), 100),
-                address=parse_str(row.get('address')),
-                url=parse_str(row.get('url'), 500)
-            ), axis=1).tolist()
+            company_df = pd.DataFrame()
+            company_df['company_id'] = chunk['company_id_clean']
+            company_df['name'] = chunk['name_clean']
+            company_df['description'] = chunk['description'].map(parse_str) if 'description' in chunk.columns else None
+            company_df['company_size'] = chunk['company_size'].map(parse_int) if 'company_size' in chunk.columns else None
+            company_df['state'] = chunk['state'].map(lambda x: parse_str(x, 100)) if 'state' in chunk.columns else None
+            company_df['country'] = chunk['country'].map(lambda x: parse_str(x, 100)) if 'country' in chunk.columns else None
+            company_df['city'] = chunk['city'].map(lambda x: parse_str(x, 255)) if 'city' in chunk.columns else None
+            company_df['zip_code'] = chunk['zip_code'].map(lambda x: parse_str(x, 100)) if 'zip_code' in chunk.columns else None
+            company_df['address'] = chunk['address'].map(parse_str) if 'address' in chunk.columns else None
+            company_df['url'] = chunk['url'].map(lambda x: parse_str(x, 500)) if 'url' in chunk.columns else None
             
-            Company.objects.bulk_create(records, ignore_conflicts=True)
+            records = [Company(**row) for row in company_df.to_dict('records')]
+            
+            Company.objects.bulk_create(
+                records,
+                update_conflicts=True,
+                update_fields=['name', 'description', 'company_size', 'state', 'country', 'city', 'zip_code', 'address', 'url'],
+                unique_fields=['company_id']
+            )
         print(f"Successfully loaded {len(self.loaded_company_ids)} companies.")
 
     # 4. Load Company Industries
-    def load_company_industries(self):
+    def load_company_industries(self) -> None:
+        """Parse and load company-industry mappings in chunks, filtering duplicates."""
         csv_path = self.get_csv_path('companies/company_industries.csv')
         if not csv_path.exists():
             print(f"Skipping Company Industries: file not found at {csv_path}")
@@ -207,31 +193,28 @@ class CSVETLPipeline:
         print("Loading Company Industries...")
         seen = set()
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['company_id_clean'] = chunk['company_id'].apply(lambda x: parse_int(x))
-            chunk['industry_clean'] = chunk['industry'].apply(lambda x: parse_str(x, 255))
+            chunk['company_id_clean'] = chunk['company_id'].map(parse_int)
+            chunk['industry_clean'] = chunk['industry'].map(lambda x: parse_str(x, 255))
             
             chunk = chunk.dropna(subset=['company_id_clean', 'industry_clean'])
             chunk = chunk[chunk['company_id_clean'].isin(self.loaded_company_ids)]
             
-            # Deduplicate by key pair using apply and lambda
-            chunk['key'] = chunk.apply(lambda r: (r['company_id_clean'], r['industry_clean']), axis=1)
+            chunk['key'] = list(zip(chunk['company_id_clean'], chunk['industry_clean']))
             chunk = chunk[~chunk['key'].isin(seen)]
-            
             if chunk.empty:
                 continue
                 
             seen.update(chunk['key'].tolist())
             
-            records = chunk.apply(lambda row: CompanyIndustry(
-                company_id=row['company_id_clean'],
-                industry=row['industry_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'company_id_clean': 'company_id', 'industry_clean': 'industry'})
+            records = [CompanyIndustry(**row) for row in chunk[['company_id', 'industry']].to_dict('records')]
             
             CompanyIndustry.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} company-industry mappings.")
 
     # 5. Load Company Specialties
-    def load_company_specialties(self):
+    def load_company_specialties(self) -> None:
+        """Parse and load company specialty descriptors in chunks."""
         csv_path = self.get_csv_path('companies/company_specialities.csv')
         if not csv_path.exists():
             print(f"Skipping Company Specialties: file not found at {csv_path}")
@@ -240,30 +223,28 @@ class CSVETLPipeline:
         print("Loading Company Specialties...")
         seen = set()
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['company_id_clean'] = chunk['company_id'].apply(lambda x: parse_int(x))
-            chunk['speciality_clean'] = chunk['speciality'].apply(lambda x: parse_str(x, 255))
+            chunk['company_id_clean'] = chunk['company_id'].map(parse_int)
+            chunk['speciality_clean'] = chunk['speciality'].map(lambda x: parse_str(x, 255))
             
             chunk = chunk.dropna(subset=['company_id_clean', 'speciality_clean'])
             chunk = chunk[chunk['company_id_clean'].isin(self.loaded_company_ids)]
             
-            chunk['key'] = chunk.apply(lambda r: (r['company_id_clean'], r['speciality_clean']), axis=1)
+            chunk['key'] = list(zip(chunk['company_id_clean'], chunk['speciality_clean']))
             chunk = chunk[~chunk['key'].isin(seen)]
-            
             if chunk.empty:
                 continue
                 
             seen.update(chunk['key'].tolist())
             
-            records = chunk.apply(lambda row: CompanySpecialty(
-                company_id=row['company_id_clean'],
-                speciality=row['speciality_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'company_id_clean': 'company_id', 'speciality_clean': 'speciality'})
+            records = [CompanySpecialty(**row) for row in chunk[['company_id', 'speciality']].to_dict('records')]
             
             CompanySpecialty.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} company specialties.")
 
     # 6. Load Employee Counts
-    def load_employee_counts(self):
+    def load_employee_counts(self) -> None:
+        """Parse and load historical employee headcount logs in chunks."""
         csv_path = self.get_csv_path('companies/employee_counts.csv')
         if not csv_path.exists():
             print(f"Skipping Employee Counts: file not found at {csv_path}")
@@ -272,10 +253,10 @@ class CSVETLPipeline:
         print("Loading Employee Counts...")
         count = 0
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['company_id_clean'] = chunk['company_id'].apply(lambda x: parse_int(x))
-            chunk['employee_count_clean'] = chunk['employee_count'].apply(lambda x: parse_int(x))
-            chunk['follower_count_clean'] = chunk['follower_count'].apply(lambda x: parse_int(x))
-            chunk['time_recorded_clean'] = chunk['time_recorded'].apply(lambda x: parse_int(x))
+            chunk['company_id_clean'] = chunk['company_id'].map(parse_int)
+            chunk['employee_count_clean'] = chunk['employee_count'].map(parse_int)
+            chunk['follower_count_clean'] = chunk['follower_count'].map(parse_int)
+            chunk['time_recorded_clean'] = chunk['time_recorded'].map(parse_int)
             
             chunk = chunk.dropna(subset=['company_id_clean', 'employee_count_clean', 'follower_count_clean', 'time_recorded_clean'])
             chunk = chunk[chunk['company_id_clean'].isin(self.loaded_company_ids)]
@@ -285,18 +266,21 @@ class CSVETLPipeline:
                 
             count += len(chunk)
             
-            records = chunk.apply(lambda row: EmployeeCountHistory(
-                company_id=row['company_id_clean'],
-                employee_count=row['employee_count_clean'],
-                follower_count=row['follower_count_clean'],
-                time_recorded=row['time_recorded_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={
+                'company_id_clean': 'company_id',
+                'employee_count_clean': 'employee_count',
+                'follower_count_clean': 'follower_count',
+                'time_recorded_clean': 'time_recorded'
+            })
+            
+            records = [EmployeeCountHistory(**row) for row in chunk[['company_id', 'employee_count', 'follower_count', 'time_recorded']].to_dict('records')]
             
             EmployeeCountHistory.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} employee count entries.")
 
     # 7. Load Job Postings
-    def load_job_postings(self):
+    def load_job_postings(self) -> None:
+        """Parse and load core job posting tables in chunks."""
         csv_path = self.get_csv_path('info/postings.csv')
         if not csv_path.exists():
             print(f"Skipping Job Postings: file not found at {csv_path}")
@@ -304,9 +288,9 @@ class CSVETLPipeline:
         
         print("Loading Job Postings (this may take a few minutes)...")
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_id_clean'] = chunk['job_id'].apply(lambda x: parse_int(x))
-            chunk['title_clean'] = chunk['title'].apply(lambda x: parse_str(x, 255))
-            chunk['description_clean'] = chunk['description'].apply(lambda x: parse_str(x))
+            chunk['job_id_clean'] = chunk['job_id'].map(parse_int)
+            chunk['title_clean'] = chunk['title'].map(lambda x: parse_str(x, 255))
+            chunk['description_clean'] = chunk['description'].map(parse_str)
             
             chunk = chunk.dropna(subset=['job_id_clean', 'title_clean', 'description_clean'])
             chunk = chunk.drop_duplicates(subset=['job_id_clean'])
@@ -317,45 +301,53 @@ class CSVETLPipeline:
                 
             self.loaded_job_ids.update(chunk['job_id_clean'].tolist())
             
-            records = chunk.apply(lambda row: JobPosting(
-                job_id=row['job_id_clean'],
-                company_id=parse_int(row.get('company_id')) if parse_int(row.get('company_id')) in self.loaded_company_ids else None,
-                company_name=parse_str(row.get('company_name'), 255),
-                title=row['title_clean'],
-                description=row['description_clean'],
-                max_salary=parse_decimal(row.get('max_salary')),
-                med_salary=parse_decimal(row.get('med_salary')),
-                min_salary=parse_decimal(row.get('min_salary')),
-                pay_period=parse_str(row.get('pay_period'), 50),
-                location=parse_str(row.get('location'), 255),
-                views=parse_int(row.get('views')),
-                applies=parse_int(row.get('applies')),
-                original_listed_time=parse_int(row.get('original_listed_time')),
-                listed_time=parse_int(row.get('listed_time')),
-                expiry=parse_int(row.get('expiry')),
-                closed_time=parse_int(row.get('closed_time')),
-                remote_allowed=parse_bool(row.get('remote_allowed')),
-                job_posting_url=parse_str(row.get('job_posting_url'), 500),
-                application_url=parse_str(row.get('application_url'), 500),
-                application_type=parse_str(row.get('application_type'), 100),
-                formatted_work_type=parse_str(row.get('formatted_work_type'), 100),
-                work_type=parse_str(row.get('work_type'), 50),
-                formatted_experience_level=parse_str(row.get('formatted_experience_level'), 100),
-                skills_desc=parse_str(row.get('skills_desc')),
-                posting_domain=parse_str(row.get('posting_domain'), 255),
-                sponsored=parse_bool(row.get('sponsored')),
-                currency=parse_str(row.get('currency'), 3),
-                compensation_type=parse_str(row.get('compensation_type'), 50),
-                normalized_salary=parse_decimal(row.get('normalized_salary')),
-                zip_code=parse_str(row.get('zip_code'), 100),
-                fips=parse_str(row.get('fips'), 50)
-            ), axis=1).tolist()
+            # Setup job posting mapping dictionary
+            job_fields = {
+                'job_id': chunk['job_id_clean'],
+                'company_name': chunk.get('company_name', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'title': chunk['title_clean'],
+                'description': chunk['description_clean'],
+                'max_salary': chunk.get('max_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'med_salary': chunk.get('med_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'min_salary': chunk.get('min_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'pay_period': chunk.get('pay_period', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50)),
+                'location': chunk.get('location', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'views': chunk.get('views', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'applies': chunk.get('applies', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'original_listed_time': chunk.get('original_listed_time', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'listed_time': chunk.get('listed_time', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'expiry': chunk.get('expiry', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'closed_time': chunk.get('closed_time', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'remote_allowed': chunk.get('remote_allowed', pd.Series(dtype=str, index=chunk.index)).map(parse_bool),
+                'job_posting_url': chunk.get('job_posting_url', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 500)),
+                'application_url': chunk.get('application_url', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 500)),
+                'application_type': chunk.get('application_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'formatted_work_type': chunk.get('formatted_work_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'work_type': chunk.get('work_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50)),
+                'formatted_experience_level': chunk.get('formatted_experience_level', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'skills_desc': chunk.get('skills_desc', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
+                'posting_domain': chunk.get('posting_domain', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'sponsored': chunk.get('sponsored', pd.Series(dtype=str, index=chunk.index)).map(parse_bool),
+                'currency': chunk.get('currency', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 3)),
+                'compensation_type': chunk.get('compensation_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50)),
+                'normalized_salary': chunk.get('normalized_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'zip_code': chunk.get('zip_code', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'fips': chunk.get('fips', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50)),
+            }
+            
+            # Company ID validation using vectorized .where
+            raw_company_ids = chunk.get('company_id', pd.Series(dtype=str, index=chunk.index)).map(parse_int)
+            job_fields['company_id'] = raw_company_ids.where(raw_company_ids.isin(self.loaded_company_ids), None)
+            
+            job_df = pd.DataFrame(job_fields)
+            records = [JobPosting(**row) for row in job_df.to_dict('records')]
             
             JobPosting.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(self.loaded_job_ids)} job postings.")
 
     # 8. Load Job Skills
-    def load_job_skills(self):
+    def load_job_skills(self) -> None:
+        """Parse and load job-skill relation records in chunks."""
         csv_path = self.get_csv_path('job/job_skills.csv')
         if not csv_path.exists():
             print(f"Skipping Job Skills: file not found at {csv_path}")
@@ -364,30 +356,31 @@ class CSVETLPipeline:
         print("Loading Job Skills Junction...")
         seen = set()
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_id_clean'] = chunk['job_id'].apply(lambda x: parse_int(x))
-            chunk['skill_id_clean'] = chunk['skill_abr'].apply(lambda x: parse_str(x, 10))
+            chunk['job_id_clean'] = chunk['job_id'].map(parse_int)
+            chunk['skill_id_clean'] = chunk['skill_abr'].map(lambda x: parse_str(x, 10))
             
             chunk = chunk.dropna(subset=['job_id_clean', 'skill_id_clean'])
             chunk = chunk[chunk['job_id_clean'].isin(self.loaded_job_ids) & chunk['skill_id_clean'].isin(self.loaded_skill_abrs)]
             
-            chunk['key'] = chunk.apply(lambda r: (r['job_id_clean'], r['skill_id_clean']), axis=1)
+            chunk['key'] = list(zip(chunk['job_id_clean'], chunk['skill_id_clean']))
             chunk = chunk[~chunk['key'].isin(seen)]
-            
             if chunk.empty:
                 continue
                 
             seen.update(chunk['key'].tolist())
             
-            records = chunk.apply(lambda row: JobPosting.skills.through(
-                jobposting_id=row['job_id_clean'],
-                skill_id=row['skill_id_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'job_id_clean': 'jobposting_id', 'skill_id_clean': 'skill_id'})
+            records = [
+                JobPosting.skills.through(**row)
+                for row in chunk[['jobposting_id', 'skill_id']].to_dict('records')
+            ]
             
             JobPosting.skills.through.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} job skills mappings.")
 
     # 9. Load Job Industries
-    def load_job_industries(self):
+    def load_job_industries(self) -> None:
+        """Parse and load job-industry reference map lists in chunks."""
         csv_path = self.get_csv_path('job/job_industries.csv')
         if not csv_path.exists():
             print(f"Skipping Job Industries: file not found at {csv_path}")
@@ -396,30 +389,31 @@ class CSVETLPipeline:
         print("Loading Job Industries Junction...")
         seen = set()
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_id_clean'] = chunk['job_id'].apply(lambda x: parse_int(x))
-            chunk['industry_id_clean'] = chunk['industry_id'].apply(lambda x: parse_int(x))
+            chunk['job_id_clean'] = chunk['job_id'].map(parse_int)
+            chunk['industry_id_clean'] = chunk['industry_id'].map(parse_int)
             
             chunk = chunk.dropna(subset=['job_id_clean', 'industry_id_clean'])
             chunk = chunk[chunk['job_id_clean'].isin(self.loaded_job_ids) & chunk['industry_id_clean'].isin(self.loaded_industry_ids)]
             
-            chunk['key'] = chunk.apply(lambda r: (r['job_id_clean'], r['industry_id_clean']), axis=1)
+            chunk['key'] = list(zip(chunk['job_id_clean'], chunk['industry_id_clean']))
             chunk = chunk[~chunk['key'].isin(seen)]
-            
             if chunk.empty:
                 continue
                 
             seen.update(chunk['key'].tolist())
             
-            records = chunk.apply(lambda row: JobPosting.industries.through(
-                jobposting_id=row['job_id_clean'],
-                industry_id=row['industry_id_clean']
-            ), axis=1).tolist()
+            chunk = chunk.rename(columns={'job_id_clean': 'jobposting_id', 'industry_id_clean': 'industry_id'})
+            records = [
+                JobPosting.industries.through(**row)
+                for row in chunk[['jobposting_id', 'industry_id']].to_dict('records')
+            ]
             
             JobPosting.industries.through.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen)} job industries mappings.")
 
     # 10. Load Benefits
-    def load_benefits(self):
+    def load_benefits(self) -> None:
+        """Parse and load job benefits checklist logs in chunks."""
         csv_path = self.get_csv_path('job/benefits.csv')
         if not csv_path.exists():
             print(f"Skipping Benefits: file not found at {csv_path}")
@@ -428,8 +422,8 @@ class CSVETLPipeline:
         print("Loading Benefits...")
         count = 0
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_id_clean'] = chunk['job_id'].apply(lambda x: parse_int(x))
-            chunk['b_type_clean'] = chunk['type'].apply(lambda x: parse_str(x, 255))
+            chunk['job_id_clean'] = chunk['job_id'].map(parse_int)
+            chunk['b_type_clean'] = chunk['type'].map(lambda x: parse_str(x, 255))
             
             chunk = chunk.dropna(subset=['job_id_clean', 'b_type_clean'])
             chunk = chunk[chunk['job_id_clean'].isin(self.loaded_job_ids)]
@@ -439,17 +433,19 @@ class CSVETLPipeline:
                 
             count += len(chunk)
             
-            records = chunk.apply(lambda row: Benefit(
-                job_id=row['job_id_clean'],
-                inferred=parse_bool(row.get('inferred')),
-                type=row['b_type_clean']
-            ), axis=1).tolist()
+            benefit_df = pd.DataFrame({
+                'job_id': chunk['job_id_clean'],
+                'type': chunk['b_type_clean'],
+                'inferred': chunk.get('inferred', pd.Series(dtype=str, index=chunk.index)).map(parse_bool)
+            })
             
+            records = [Benefit(**row) for row in benefit_df.to_dict('records')]
             Benefit.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} benefit entries.")
 
     # 11. Load Salaries
-    def load_salaries(self):
+    def load_salaries(self) -> None:
+        """Parse and load distinct salary options and ranges in chunks."""
         csv_path = self.get_csv_path('job/salaries.csv')
         if not csv_path.exists():
             print(f"Skipping Salaries: file not found at {csv_path}")
@@ -458,8 +454,8 @@ class CSVETLPipeline:
         print("Loading Salaries...")
         seen_salaries = set()
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['salary_id_clean'] = chunk['salary_id'].apply(lambda x: parse_int(x))
-            chunk['job_id_clean'] = chunk['job_id'].apply(lambda x: parse_int(x))
+            chunk['salary_id_clean'] = chunk['salary_id'].map(parse_int)
+            chunk['job_id_clean'] = chunk['job_id'].map(parse_int)
             
             chunk = chunk.dropna(subset=['salary_id_clean', 'job_id_clean'])
             chunk = chunk[chunk['job_id_clean'].isin(self.loaded_job_ids)]
@@ -470,32 +466,49 @@ class CSVETLPipeline:
                 
             seen_salaries.update(chunk['salary_id_clean'].tolist())
             
-            records = chunk.apply(lambda row: JobSalaryDetail(
-                salary_id=row['salary_id_clean'],
-                job_id=row['job_id_clean'],
-                max_salary=parse_decimal(row.get('max_salary')),
-                med_salary=parse_decimal(row.get('med_salary')),
-                min_salary=parse_decimal(row.get('min_salary')),
-                pay_period=parse_str(row.get('pay_period'), 50),
-                currency=parse_str(row.get('currency'), 3),
-                compensation_type=parse_str(row.get('compensation_type'), 50)
-            ), axis=1).tolist()
+            salary_df = pd.DataFrame({
+                'salary_id': chunk['salary_id_clean'],
+                'job_id': chunk['job_id_clean'],
+                'max_salary': chunk.get('max_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'med_salary': chunk.get('med_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'min_salary': chunk.get('min_salary', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'pay_period': chunk.get('pay_period', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50)),
+                'currency': chunk.get('currency', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 3)),
+                'compensation_type': chunk.get('compensation_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 50))
+            })
             
+            records = [JobSalaryDetail(**row) for row in salary_df.to_dict('records')]
             JobSalaryDetail.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {len(seen_salaries)} salary entries.")
 
     # 12. Load Data Analyst Benchmarks
-    def load_data_analyst_benchmarks(self):
+    def load_data_analyst_benchmarks(self) -> None:
+        """Parse and load Glassdoor Data Analyst benchmark history."""
         csv_path = self.get_csv_path('analysis/DataAnalyst.csv')
         if not csv_path.exists():
             print(f"Skipping Data Analyst Benchmarks: file not found at {csv_path}")
             return
         
         print("Loading Data Analyst Benchmarks...")
+        
+        # Load all existing industry IDs and names into a map for fast lookup
+        industry_map = {ind.industry_name.lower().strip(): ind.industry_id for ind in Industry.objects.all()}
+        
+        def clean_co_name(raw_name):
+            name_val = parse_str(raw_name, 255)
+            if name_val:
+                return name_val.split('\n')[0].strip()
+            return None
+
+        def clean_ind_name(raw_ind):
+            ind_val = parse_str(raw_ind, 255)
+            if ind_val and ind_val.lower() not in ('-1', 'unknown', 'nan', 'none', ''):
+                return ind_val.strip()
+            return None
+
         count = 0
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_title_clean'] = chunk['Job Title'].apply(lambda x: parse_str(x, 255))
-            
+            chunk['job_title_clean'] = chunk['Job Title'].map(lambda x: parse_str(x, 255))
             chunk = chunk.dropna(subset=['job_title_clean'])
             
             if chunk.empty:
@@ -503,29 +516,71 @@ class CSVETLPipeline:
                 
             count += len(chunk)
             
-            records = chunk.apply(lambda row: DataAnalystBenchmark(
-                job_title=row['job_title_clean'],
-                salary_estimate=parse_str(row.get('Salary Estimate'), 100),
-                job_description=parse_str(row.get('Job Description')),
-                rating=parse_decimal(row.get('Rating')),
-                company_name=parse_str(row.get('Company Name'), 255),
-                location=parse_str(row.get('Location'), 255),
-                headquarters=parse_str(row.get('Headquarters'), 255),
-                size=parse_str(row.get('Size'), 100),
-                founded=parse_int(row.get('Founded')),
-                type_of_ownership=parse_str(row.get('Type of ownership'), 255),
-                industry=parse_str(row.get('Industry'), 255),
-                sector=parse_str(row.get('Sector'), 255),
-                revenue=parse_str(row.get('Revenue'), 100),
-                competitors=parse_str(row.get('Competitors')),
-                easy_apply=parse_str(row.get('Easy Apply'), 20)
-            ), axis=1).tolist()
+            chunk['company_name_raw'] = chunk['Company Name']
+            chunk['company_name_clean'] = chunk['company_name_raw'].map(clean_co_name)
+            chunk['industry_clean'] = chunk['Industry'].map(clean_ind_name)
             
+            # Resolve companies
+            unique_companies = chunk['company_name_clean'].dropna().unique()
+            if len(unique_companies) > 0:
+                companies_df = pd.DataFrame({'name': unique_companies})
+                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['data_source'] = 'CSV'
+                
+                companies_to_create = [Company(**row) for row in companies_df.to_dict('records')]
+                Company.objects.bulk_create(
+                    companies_to_create,
+                    update_conflicts=True,
+                    update_fields=['name', 'data_source'],
+                    unique_fields=['company_id']
+                )
+                self.loaded_company_ids.update(companies_df['company_id'].tolist())
+                
+            # Resolve industries
+            unique_industries = chunk['industry_clean'].dropna().unique()
+            new_industries = [ind for ind in unique_industries if ind.lower().strip() not in industry_map]
+            if new_industries:
+                ind_df = pd.DataFrame({'industry_name': new_industries})
+                ind_df['industry_id'] = ind_df['industry_name'].map(lambda x: generate_deterministic_id(x.lower().strip()))
+                
+                existing_pks = set(Industry.objects.filter(industry_id__in=ind_df['industry_id'].tolist()).values_list('industry_id', flat=True))
+                ind_df = ind_df[~ind_df['industry_id'].isin(existing_pks)]
+                
+                if not ind_df.empty:
+                    industries_to_create = [Industry(**row) for row in ind_df.to_dict('records')]
+                    Industry.objects.bulk_create(industries_to_create, ignore_conflicts=True)
+                    
+                # Update industry_map
+                for name, pk in zip(ind_df['industry_name'], ind_df['industry_id']):
+                    industry_map[name.lower().strip()] = pk
+            
+            benchmark_df = pd.DataFrame({
+                'job_title': chunk['job_title_clean'],
+                'salary_estimate': chunk.get('Salary Estimate', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'job_description': chunk.get('Job Description', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
+                'rating': chunk.get('Rating', pd.Series(dtype=str, index=chunk.index)).map(parse_decimal),
+                'company_name': chunk['company_name_raw'],
+                'company_id': chunk['company_name_clean'].map(lambda x: generate_deterministic_id(x) if x else None),
+                'location': chunk.get('Location', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'headquarters': chunk.get('Headquarters', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'size': chunk.get('Size', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'founded': chunk.get('Founded', pd.Series(dtype=str, index=chunk.index)).map(parse_int),
+                'type_of_ownership': chunk.get('Type of ownership', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'industry': chunk.get('Industry', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'industry_ref_id': chunk['industry_clean'].map(lambda x: industry_map.get(x.lower().strip()) if x else None),
+                'sector': chunk.get('Sector', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 255)),
+                'revenue': chunk.get('Revenue', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 100)),
+                'competitors': chunk.get('Competitors', pd.Series(dtype=str, index=chunk.index)).map(parse_str),
+                'easy_apply': chunk.get('Easy Apply', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 20)),
+            })
+            
+            records = [DataAnalystBenchmark(**row) for row in benchmark_df.to_dict('records')]
             DataAnalystBenchmark.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} Data Analyst benchmark records.")
 
     # 13. Load Data Science Benchmarks
-    def load_data_science_benchmarks(self):
+    def load_data_science_benchmarks(self) -> None:
+        """Parse and load global Data Science salary benchmarks dataset."""
         csv_path = self.get_csv_path('analysis/ds_salaries.csv')
         if not csv_path.exists():
             print(f"Skipping Data Science Salary Benchmarks: file not found at {csv_path}")
@@ -534,10 +589,10 @@ class CSVETLPipeline:
         print("Loading Data Science Salary Benchmarks...")
         count = 0
         for chunk in pd.read_csv(csv_path, dtype=str, chunksize=self.chunk_size):
-            chunk['job_title_clean'] = chunk['job_title'].apply(lambda x: parse_str(x, 255))
-            chunk['work_year_clean'] = chunk['work_year'].apply(lambda x: parse_int(x))
-            chunk['salary_clean'] = chunk['salary'].apply(lambda x: parse_decimal(x))
-            chunk['salary_in_usd_clean'] = chunk['salary_in_usd'].apply(lambda x: parse_decimal(x))
+            chunk['job_title_clean'] = chunk['job_title'].map(lambda x: parse_str(x, 255))
+            chunk['work_year_clean'] = chunk['work_year'].map(parse_int)
+            chunk['salary_clean'] = chunk['salary'].map(parse_decimal)
+            chunk['salary_in_usd_clean'] = chunk['salary_in_usd'].map(parse_decimal)
             
             chunk = chunk.dropna(subset=['job_title_clean', 'work_year_clean', 'salary_clean', 'salary_in_usd_clean'])
             
@@ -546,29 +601,382 @@ class CSVETLPipeline:
                 
             count += len(chunk)
             
-            records = chunk.apply(lambda row: DataScienceSalaryBenchmark(
-                work_year=row['work_year_clean'],
-                experience_level=parse_str(row.get('experience_level'), 10) or '',
-                employment_type=parse_str(row.get('employment_type'), 10) or '',
-                job_title=row['job_title_clean'],
-                salary=row['salary_clean'],
-                salary_currency=parse_str(row.get('salary_currency'), 3) or '',
-                salary_in_usd=row['salary_in_usd_clean'],
-                employee_residence=parse_str(row.get('employee_residence'), 10) or '',
-                remote_ratio=parse_int(row.get('remote_ratio')) or 0,
-                company_location=parse_str(row.get('company_location'), 10) or '',
-                company_size=parse_str(row.get('company_size'), 3) or ''
-            ), axis=1).tolist()
+            benchmark_df = pd.DataFrame({
+                'work_year': chunk['work_year_clean'],
+                'experience_level': chunk.get('experience_level', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 10) or ''),
+                'employment_type': chunk.get('employment_type', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 10) or ''),
+                'job_title': chunk['job_title_clean'],
+                'salary': chunk['salary_clean'],
+                'salary_currency': chunk.get('salary_currency', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 3) or ''),
+                'salary_in_usd': chunk['salary_in_usd_clean'],
+                'employee_residence': chunk.get('employee_residence', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 10) or ''),
+                'remote_ratio': chunk.get('remote_ratio', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_int(x) or 0),
+                'company_location': chunk.get('company_location', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 10) or ''),
+                'company_size': chunk.get('company_size', pd.Series(dtype=str, index=chunk.index)).map(lambda x: parse_str(x, 3) or '')
+            })
             
+            records = [DataScienceSalaryBenchmark(**row) for row in benchmark_df.to_dict('records')]
             DataScienceSalaryBenchmark.objects.bulk_create(records, ignore_conflicts=True)
         print(f"Successfully loaded {count} Data Science benchmark records.")
+
+
+# ---------------------------------------------------------
+# Adzuna API Daily Ingestion Pipeline Class
+# ---------------------------------------------------------
+class AdzunaAPIIngestionPipeline:
+    """ETL Ingestion Pipeline to fetch, validate, enrich and store job listings from Adzuna APIs."""
+
+    def __init__(self, client: Any):
+        self.client = client
+        self.countries = [
+            'gb', 'us', 'de', 'fr', 'au', 'nz', 'ca', 'in', 'pl', 'br', 'at', 'za',
+            'nl', 'it', 'es', 'ru', 'mx', 'sg', 'my', 'ie', 'ch', 'be'
+        ]
+        self.companies_created = 0
+        self.jobs_created = 0
+        self.histories_created = 0
+        self.histograms_created = 0
+        self.top_companies_created = 0
+
+    def run(self) -> None:
+        """Execute the ingestion workflow across all countries and predict salaries."""
+        logger.info("Starting daily Adzuna API ingestion...")
+        for country in self.countries:
+            logger.info(f"Ingesting Adzuna jobs for country: {country}")
+            self.ingest_country_categories(country)
+            self.ingest_country_jobs(country)
+            self.ingest_country_salary_history(country)
+            self.ingest_country_salary_histogram(country)
+            self.ingest_country_top_companies(country)
+        
+        self.ingest_jobsworth_prediction()
+        logger.info(
+            f"Daily Adzuna API ingestion completed! Created: "
+            f"{self.companies_created} companies, {self.jobs_created} job postings, "
+            f"{self.histories_created} salary history points, {self.histograms_created} histogram points, "
+            f"{self.top_companies_created} top company standings."
+        )
+
+    def ingest_country_categories(self, country: str) -> None:
+        """Fetch categories from API and upsert into Industry table."""
+        try:
+            category_results = self.client.fetch_categories(country=country)
+            if not category_results:
+                return
+            
+            cat_df = pd.DataFrame(category_results)
+            cat_df['tag_clean'] = cat_df.get('tag', pd.Series(dtype=str, index=cat_df.index)).map(parse_str)
+            cat_df['label_clean'] = cat_df.get('label', pd.Series(dtype=str, index=cat_df.index)).map(parse_str)
+            cat_df = cat_df.dropna(subset=['tag_clean', 'label_clean'])
+            
+            if cat_df.empty:
+                return
+                
+            cat_df['industry_id'] = cat_df['tag_clean'].map(generate_deterministic_id)
+            cat_df = cat_df.drop_duplicates(subset=['industry_id'])
+            
+            cat_df = cat_df.rename(columns={'label_clean': 'industry_name'})
+            industries = [
+                Industry(**row)
+                for row in cat_df[['industry_id', 'industry_name']].to_dict('records')
+            ]
+            Industry.objects.bulk_create(industries, ignore_conflicts=True)
+        except Exception as e:
+            logger.error(f"Error fetching categories for {country}: {e}", exc_info=True)
+
+    def ingest_country_jobs(self, country: str) -> None:
+        """Fetch job search pages and bulk load listings into JobPosting table."""
+        all_jobs = []
+        for page in range(1, 6):
+            try:
+                results = self.client.fetch_jobs(country=country, page=page, query="data engineer")
+                if not results:
+                    break
+                all_jobs.extend(results)
+            except Exception as e:
+                logger.error(f"Error occurred during Adzuna fetch for country {country} page {page}: {e}", exc_info=True)
+                break
+                
+        if not all_jobs:
+            return
+            
+        try:
+            job_df = pd.DataFrame(all_jobs)
+            job_df['job_id_clean'] = job_df.get('id', pd.Series(dtype=str, index=job_df.index)).map(parse_int)
+            job_df['title_clean'] = job_df.get('title', pd.Series(dtype=str, index=job_df.index)).map(lambda x: parse_str(x, 255))
+            raw_descs = job_df.get('description', pd.Series(dtype=str, index=job_df.index)).map(parse_str)
+            job_df['desc_clean'] = raw_descs.map(clean_html_text)
+            
+            job_df = job_df.dropna(subset=['job_id_clean', 'title_clean', 'desc_clean'])
+            job_df = job_df.drop_duplicates(subset=['job_id_clean'])
+            
+            if job_df.empty:
+                return
+                
+            existing_job_ids = set(
+                JobPosting.objects.filter(job_id__in=job_df['job_id_clean'].tolist())
+                .values_list('job_id', flat=True)
+            )
+            job_df = job_df[~job_df['job_id_clean'].isin(existing_job_ids)]
+            
+            if job_df.empty:
+                return
+                
+            # Parse companies
+            company_data_list = job_df.get('company', pd.Series([None]*len(job_df), index=job_df.index))
+            company_names = company_data_list.map(lambda c: parse_str(c.get('display_name'), 255) if isinstance(c, dict) else None)
+            job_df['company_name_clean'] = company_names
+            
+            unique_company_names = job_df['company_name_clean'].dropna().unique()
+            if len(unique_company_names) > 0:
+                companies_df = pd.DataFrame({'name': unique_company_names})
+                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['data_source'] = 'API'
+                
+                companies_to_upsert = [Company(**row) for row in companies_df.to_dict('records')]
+                Company.objects.bulk_create(
+                    companies_to_upsert,
+                    update_conflicts=True,
+                    update_fields=['name', 'data_source'],
+                    unique_fields=['company_id']
+                )
+                self.companies_created += len(companies_to_upsert)
+            
+            company_name_to_id = {name: generate_deterministic_id(name) for name in unique_company_names}
+            job_df['company_id_resolved'] = job_df['company_name_clean'].map(lambda x: company_name_to_id.get(x) if x else None)
+            
+            # Times
+            def parse_created_time(created_str):
+                if created_str:
+                    try:
+                        dt = datetime.strptime(str(created_str).strip(), "%Y-%m-%dT%H:%M:%SZ")
+                        return int(dt.timestamp())
+                    except Exception:
+                        pass
+                return None
+                
+            job_df['listed_time'] = job_df.get('created', pd.Series(dtype=str, index=job_df.index)).map(parse_created_time)
+            
+            # Vectorized inference/apply
+            job_df['remote_allowed'] = job_df.apply(lambda row: infer_remote_allowed(row['title_clean'], row['desc_clean']), axis=1)
+            
+            work_type_tuples = job_df.apply(lambda row: infer_work_type(row['title_clean'], row['desc_clean']), axis=1)
+            job_df['work_type'] = work_type_tuples.map(lambda x: x[0])
+            job_df['formatted_work_type'] = work_type_tuples.map(lambda x: x[1])
+            
+            job_df['formatted_experience_level'] = job_df.apply(lambda row: infer_experience_level(row['title_clean'], row['desc_clean']), axis=1)
+            
+            min_sals = job_df.get('salary_min', pd.Series(dtype=str, index=job_df.index)).map(parse_decimal)
+            max_sals = job_df.get('salary_max', pd.Series(dtype=str, index=job_df.index)).map(parse_decimal)
+            job_df['min_salary'] = min_sals
+            job_df['max_salary'] = max_sals
+            
+            # Vectorized salary normalization
+            sal_val = job_df.apply(lambda row: calculate_average_salary(row['min_salary'], row['max_salary']), axis=1)
+            norm_res = sal_val.map(lambda x: normalize_api_salary(country, x) if x is not None else (None, None))
+            
+            job_df['currency'] = norm_res.map(lambda x: x[0])
+            job_df['normalized_salary'] = norm_res.map(lambda x: x[1])
+            
+            location_data_list = job_df.get('location', pd.Series([None]*len(job_df), index=job_df.index))
+            job_df['location'] = location_data_list.map(lambda l: parse_str(l.get('display_name'), 255) if isinstance(l, dict) else None)
+            
+            job_df['job_posting_url'] = job_df.get('redirect_url', pd.Series(dtype=str, index=job_df.index)).map(lambda x: parse_str(x, 500))
+            job_df['data_source'] = 'API'
+            
+            # Setup columns to construct JobPosting objects
+            job_posting_cols = [
+                'job_id_clean', 'company_id_resolved', 'company_name_clean', 'title_clean', 'desc_clean',
+                'min_salary', 'max_salary', 'job_posting_url', 'location', 'listed_time',
+                'remote_allowed', 'work_type', 'formatted_work_type', 'formatted_experience_level',
+                'currency', 'normalized_salary', 'data_source'
+            ]
+            
+            # Rename for DB mapping:
+            job_df_for_db = job_df[job_posting_cols].rename(columns={
+                'job_id_clean': 'job_id',
+                'company_id_resolved': 'company_id',
+                'company_name_clean': 'company_name',
+                'title_clean': 'title',
+                'desc_clean': 'description'
+            })
+            
+            # Convert to dict and bulk create
+            job_postings = [JobPosting(**row) for row in job_df_for_db.to_dict('records')]
+            JobPosting.objects.bulk_create(job_postings, ignore_conflicts=True)
+            self.jobs_created += len(job_postings)
+        except Exception as e:
+            logger.error(f"Error processing Adzuna jobs for country {country}: {e}", exc_info=True)
+
+    def ingest_country_salary_history(self, country: str) -> None:
+        """Fetch historical salary averages and save them to APISalaryHistory."""
+        try:
+            it_tag = 'it-jobs'
+            it_industry_id = generate_deterministic_id(it_tag)
+            category_ref = Industry.objects.filter(industry_id=it_industry_id).first()
+            
+            history_res = self.client.fetch_salary_history(country=country, category=it_tag)
+            if not history_res:
+                return
+            month_data = history_res.get('month', {})
+            if not month_data:
+                return
+                
+            hist_df = pd.DataFrame(list(month_data.items()), columns=['month', 'average_salary'])
+            hist_df['month_clean'] = hist_df['month'].map(parse_str)
+            hist_df['avg_salary_clean'] = hist_df['average_salary'].map(parse_decimal)
+            hist_df = hist_df.dropna(subset=['month_clean', 'avg_salary_clean'])
+            
+            existing_months = set(
+                APISalaryHistory.objects.filter(country=country, category=it_tag)
+                .values_list('month', flat=True)
+            )
+            hist_df = hist_df[~hist_df['month_clean'].isin(existing_months)]
+            
+            if hist_df.empty:
+                return
+                
+            hist_df = hist_df.rename(columns={'month_clean': 'month', 'avg_salary_clean': 'average_salary'})
+            hist_df['country'] = country
+            hist_df['category'] = it_tag
+            hist_df['category_ref'] = category_ref
+            hist_df['location'] = None
+            
+            hist_records = [
+                APISalaryHistory(**row)
+                for row in hist_df[['country', 'location', 'category', 'month', 'category_ref', 'average_salary']].to_dict('records')
+            ]
+            APISalaryHistory.objects.bulk_create(hist_records, ignore_conflicts=True)
+            self.histories_created += len(hist_records)
+        except Exception as e:
+            logger.error(f"Error occurred during Salary History fetch for {country}: {e}", exc_info=True)
+
+    def ingest_country_salary_histogram(self, country: str) -> None:
+        """Fetch salary vacancy distributions and save them to APISalaryHistogram."""
+        try:
+            histogram_res = self.client.fetch_salary_histogram(country=country, what="data engineer")
+            if not histogram_res:
+                return
+            hist_data = histogram_res.get('histogram', {})
+            if not hist_data:
+                return
+                
+            histogram_df = pd.DataFrame(list(hist_data.items()), columns=['bracket', 'vacancy'])
+            histogram_df['bracket_dec'] = histogram_df['bracket'].map(parse_decimal)
+            histogram_df['val_int'] = histogram_df['vacancy'].map(parse_int)
+            histogram_df = histogram_df.dropna(subset=['bracket_dec', 'val_int'])
+            
+            existing_brackets = set(
+                APISalaryHistogram.objects.filter(country=country, what="data engineer")
+                .values_list('salary_bracket', flat=True)
+            )
+            histogram_df = histogram_df[~histogram_df['bracket_dec'].isin(existing_brackets)]
+            
+            if histogram_df.empty:
+                return
+                
+            histogram_df = histogram_df.rename(columns={'bracket_dec': 'salary_bracket', 'val_int': 'vacancy_count'})
+            histogram_df['country'] = country
+            histogram_df['location'] = None
+            histogram_df['what'] = "data engineer"
+            
+            histogram_records = [
+                APISalaryHistogram(**row)
+                for row in histogram_df[['country', 'location', 'what', 'salary_bracket', 'vacancy_count']].to_dict('records')
+            ]
+            APISalaryHistogram.objects.bulk_create(histogram_records, ignore_conflicts=True)
+            self.histograms_created += len(histogram_records)
+        except Exception as e:
+            logger.error(f"Error occurred during Salary Histogram fetch for {country}: {e}", exc_info=True)
+
+    def ingest_country_top_companies(self, country: str) -> None:
+        """Fetch top hiring companies standings and save them to APITopCompany."""
+        try:
+            top_comps = self.client.fetch_top_companies(country=country, what="data engineer")
+            if not top_comps:
+                return
+                
+            top_df = pd.DataFrame(top_comps)
+            top_df['comp_name_clean'] = top_df.get('canonical_name', pd.Series(dtype=str, index=top_df.index)).map(lambda x: parse_str(x, 255))
+            top_df['comp_count_clean'] = top_df.get('count', pd.Series(dtype=str, index=top_df.index)).map(parse_int)
+            top_df['comp_sal_clean'] = top_df.get('average_salary', pd.Series(dtype=str, index=top_df.index)).map(parse_decimal)
+            
+            top_df = top_df.dropna(subset=['comp_name_clean', 'comp_count_clean'])
+            
+            if top_df.empty:
+                return
+                
+            unique_top_companies = top_df['comp_name_clean'].dropna().unique()
+            if len(unique_top_companies) > 0:
+                companies_df = pd.DataFrame({'name': unique_top_companies})
+                companies_df['company_id'] = companies_df['name'].map(generate_deterministic_id)
+                companies_df['data_source'] = 'API'
+                
+                companies_to_upsert = [Company(**row) for row in companies_df.to_dict('records')]
+                Company.objects.bulk_create(
+                    companies_to_upsert,
+                    update_conflicts=True,
+                    update_fields=['name', 'data_source'],
+                    unique_fields=['company_id']
+                )
+                self.companies_created += len(companies_to_upsert)
+                
+            company_objs = {co.name.lower(): co for co in Company.objects.filter(name__in=unique_top_companies)}
+            
+            existing_entries = set(
+                APITopCompany.objects.filter(country=country, what="data engineer", company_name__in=list(unique_top_companies))
+                .values_list('company_name', flat=True)
+            )
+            top_df = top_df[~top_df['comp_name_clean'].isin(existing_entries)]
+            
+            if top_df.empty:
+                return
+                
+            top_df['company_id_resolved'] = top_df['comp_name_clean'].map(lambda name: company_objs.get(name.lower()))
+            
+            top_df = top_df.rename(columns={
+                'comp_name_clean': 'company_name',
+                'company_id_resolved': 'company',
+                'comp_count_clean': 'vacancy_count',
+                'comp_sal_clean': 'average_salary'
+            })
+            top_df['country'] = country
+            top_df['what'] = "data engineer"
+            
+            top_records = [
+                APITopCompany(**row)
+                for row in top_df[['country', 'what', 'company_name', 'company', 'vacancy_count', 'average_salary']].to_dict('records')
+            ]
+            APITopCompany.objects.bulk_create(top_records, ignore_conflicts=True)
+            self.top_companies_created += len(top_records)
+        except Exception as e:
+            logger.error(f"Error occurred during Top Companies fetch for {country}: {e}", exc_info=True)
+
+    def ingest_jobsworth_prediction(self) -> None:
+        """Fetch Jobsworth salary prediction test sample."""
+        try:
+            test_title = "Data Engineer"
+            test_desc = "Python, SQL, Apache Spark, ETL pipeline developer"
+            prediction_res = self.client.fetch_salary_prediction(country="gb", title=test_title, description=test_desc)
+            if not prediction_res:
+                return
+            pred_sal = parse_decimal(prediction_res.get('salary'))
+            if pred_sal:
+                APISalaryPrediction.objects.get_or_create(
+                    title=test_title,
+                    description=test_desc,
+                    defaults={'predicted_salary': pred_sal}
+                )
+                logger.info(f"Jobsworth Prediction: Title='{test_title}' => Salary={pred_sal}")
+        except Exception as e:
+            logger.error(f"Error occurred during Jobsworth prediction: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------
 # Celery Cron Job Task Definition
 # ---------------------------------------------------------
 @shared_task(name="core.tasks.run_etl_pipeline")
-def run_etl_pipeline():
+def run_etl_pipeline() -> None:
     """Shared Celery Beat Task to run ETL once a month."""
     pipeline = CSVETLPipeline()
     pipeline.run()
@@ -578,94 +986,9 @@ def run_etl_pipeline():
 # Adzuna API Daily Ingestion Task
 # ---------------------------------------------------------
 @shared_task(name="core.tasks.run_adzuna_ingestion")
-def run_adzuna_ingestion():
+def run_adzuna_ingestion() -> None:
     """Shared Celery Beat Task to run Adzuna API ingestion daily at 1:00 AM."""
-    import hashlib
-    from datetime import datetime
     from integration.adzuna.client import AdzunaClient
-    
     client = AdzunaClient()
-    
-    # Standard countries list supported by Adzuna
-    countries = [
-        'gb', 'us', 'de', 'fr', 'au', 'nz', 'ca', 'in', 'pl', 'br', 'at', 'za',
-        'nl', 'it', 'es', 'ru', 'mx', 'sg', 'my', 'ie', 'ch', 'be'
-    ]
-    
-    companies_created = 0
-    jobs_created = 0
-    
-    logger.info("Starting daily Adzuna API ingestion...")
-    
-    for country in countries:
-        logger.info(f"Ingesting Adzuna jobs for country: {country}")
-        for page in range(1, 6):
-            try:
-                results = client.fetch_jobs(country=country, page=page, query="data engineer")
-                if not results:
-                    break
-                
-                for job_data in results:
-                    job_id = parse_int(job_data.get('id'))
-                    title = parse_str(job_data.get('title'), 255)
-                    description = parse_str(job_data.get('description'))
-                    
-                    if not job_id or not title or not description:
-                        continue
-                    
-                    # Deduplication: check if job listing exists
-                    if JobPosting.objects.filter(job_id=job_id).exists():
-                        continue
-                    
-                    # Company parsing and deterministic ID resolution
-                    company_data = job_data.get('company', {})
-                    company_name = parse_str(company_data.get('display_name'), 255)
-                    company = None
-                    
-                    if company_name:
-                        # Generate 63-bit integer PK from company name hash
-                        company_pk = int(hashlib.md5(company_name.lower().strip().encode('utf-8')).hexdigest(), 16) & ((1 << 63) - 1)
-                        company, created = Company.objects.get_or_create(
-                            company_id=company_pk,
-                            defaults={
-                                'name': company_name,
-                                'data_source': 'API'
-                            }
-                        )
-                        if created:
-                            companies_created += 1
-                    
-                    # Parse created time (date format: ISO "2013-11-08T18:07:39Z")
-                    created_time = None
-                    created_str = job_data.get('created')
-                    if created_str:
-                        try:
-                            dt = datetime.strptime(created_str.strip(), "%Y-%m-%dT%H:%M:%SZ")
-                            created_time = int(dt.timestamp())
-                        except Exception:
-                            pass
-                    
-                    # Location
-                    loc_data = job_data.get('location', {})
-                    location_display = parse_str(loc_data.get('display_name'), 255)
-                    
-                    # Create job posting
-                    JobPosting.objects.create(
-                        job_id=job_id,
-                        company=company,
-                        company_name=company_name,
-                        title=title,
-                        description=description,
-                        min_salary=parse_decimal(job_data.get('salary_min')),
-                        max_salary=parse_decimal(job_data.get('salary_max')),
-                        job_posting_url=parse_str(job_data.get('redirect_url'), 500),
-                        location=location_display,
-                        listed_time=created_time,
-                        data_source='API'
-                    )
-                    jobs_created += 1
-            except Exception as e:
-                logger.error(f"Error occurred during Adzuna ingestion for country {country} page {page}: {e}", exc_info=True)
-                break
-                
-    logger.info(f"Daily Adzuna API ingestion completed! Created {companies_created} companies and {jobs_created} job postings.")
+    pipeline = AdzunaAPIIngestionPipeline(client)
+    pipeline.run()

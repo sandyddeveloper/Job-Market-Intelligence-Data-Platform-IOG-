@@ -19,8 +19,9 @@ python manage.py migrate --noinput
 # Collect static files for production
 python manage.py collectstatic --noinput
 
-# Start Celery worker process in the background
+# Start Celery worker and scheduler (beat) processes in the background
 celery -A Settings worker --loglevel=info &
+celery -A Settings beat --loglevel=info --pidfile=/tmp/celerybeat.pid &
 
 # Start Django Web Server via Gunicorn on Hugging Face default port 7860
 gunicorn Settings.wsgi:application --bind 0.0.0.0:7860

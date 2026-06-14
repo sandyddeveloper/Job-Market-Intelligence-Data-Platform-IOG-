@@ -38,6 +38,7 @@ ALLOWED_HOSTS = [host.strip() for host in ALLOWED_HOSTS_STR.split(',') if host.s
 # Application definition
 
 INSTALLED_APPS = [
+    'corsheaders',
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -53,6 +54,7 @@ INSTALLED_APPS = [
 ]
 
 MIDDLEWARE = [
+    'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -63,6 +65,9 @@ MIDDLEWARE = [
     'core.middleware.APILoggingMiddleware',
     # 'django.middleware.clickjacking.XFrameOptionsMiddleware',
 ]
+
+CORS_ALLOW_ALL_ORIGINS = True
+
 
 ROOT_URLCONF = 'Settings.urls'
 
@@ -239,11 +244,11 @@ from celery.schedules import crontab
 CELERY_BEAT_SCHEDULE = {
     'run-etl-monthly-on-day-1': {
         'task': 'core.tasks.run_etl_pipeline',
-        'schedule': crontab(hour=1, minute=30),
+        'schedule': crontab(hour=12, minute=40),
     },
     'run-adzuna-ingestion-daily-1am': {
         'task': 'core.tasks.run_adzuna_ingestion',
-        'schedule': crontab(hour=1, minute=30),
+        'schedule': crontab(hour=12, minute=40),
     },
 }
 
