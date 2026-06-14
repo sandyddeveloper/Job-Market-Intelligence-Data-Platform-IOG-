@@ -1,12 +1,54 @@
 import logging
+import time
 import requests
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
+# Retry configuration for transient failures (503, 429, timeouts)
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE = 2  # seconds
+
+
+def _request_with_retry(method, url, **kwargs):
+    """
+    Wrapper around requests.get/post with automatic retry + exponential backoff
+    for transient HTTP errors (429, 500, 502, 503, 504) and connection errors.
+    """
+    retryable_status_codes = {429, 500, 502, 503, 504}
+    last_exception = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = method(url, **kwargs)
+            if response.status_code in retryable_status_codes and attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF_BASE ** attempt
+                logger.warning(
+                    f"Adzuna API returned {response.status_code} for {url} "
+                    f"(attempt {attempt}/{MAX_RETRIES}). Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+                continue
+            return response
+        except (requests.ConnectionError, requests.Timeout) as e:
+            last_exception = e
+            if attempt < MAX_RETRIES:
+                wait = RETRY_BACKOFF_BASE ** attempt
+                logger.warning(
+                    f"Adzuna request to {url} failed with {type(e).__name__} "
+                    f"(attempt {attempt}/{MAX_RETRIES}). Retrying in {wait}s..."
+                )
+                time.sleep(wait)
+            else:
+                raise
+
+    # Should not reach here, but just in case
+    if last_exception:
+        raise last_exception
+
 
 class AdzunaClient:
-    """Adzuna Job Search API Client."""
+    """Adzuna Job Search API Client with automatic retry on transient failures."""
 
     def __init__(self, app_id=None, app_key=None):
         self.app_id = app_id or getattr(settings, 'ADZUNA_APP_ID', None)
@@ -39,12 +81,12 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url} - params: what='{query}', page={page}")
-            response = requests.get(url, params=params, headers=headers, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, headers=headers, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 return data.get('results', [])
             else:
-                logger.error(f"Adzuna API returned error code {response.status_code}: {response.text}")
+                logger.error(f"Adzuna API returned error code {response.status_code} for {url}")
                 return []
         except Exception as e:
             logger.error(f"Failed to fetch jobs from Adzuna API for {country} page {page}: {e}", exc_info=True)
@@ -71,7 +113,7 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url} - params: category={category}, location={location}")
-            response = requests.get(url, params=params, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
             return {}
@@ -100,7 +142,7 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url} - params: what={what}, location={location}")
-            response = requests.get(url, params=params, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
             return {}
@@ -126,7 +168,7 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url} - params: what={what}")
-            response = requests.get(url, params=params, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 return data.get('leaderboard', [])
@@ -151,7 +193,7 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url}")
-            response = requests.get(url, params=params, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, timeout=30)
             if response.status_code == 200:
                 data = response.json()
                 return data.get('results', [])
@@ -178,7 +220,7 @@ class AdzunaClient:
 
         try:
             logger.info(f"Adzuna GET {url} - params: title={title}")
-            response = requests.get(url, params=params, timeout=15)
+            response = _request_with_retry(requests.get, url, params=params, timeout=30)
             if response.status_code == 200:
                 return response.json()
             return {}

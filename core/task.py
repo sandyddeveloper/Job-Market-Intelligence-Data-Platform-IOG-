@@ -128,13 +128,166 @@ class CSVETLPipeline:
                     f.write(chunk)
 
     def _download_and_extract_raw_data(self) -> None:
-        """Download raw data zip file from environment variable if local files are missing."""
+        """Download raw data from environment variable. Supports both ZIP file URLs and Google Drive folder URLs."""
         import os
         zip_url = os.getenv('RAW_DATA_ZIP_URL')
         if not zip_url:
             print("No RAW_DATA_ZIP_URL environment variable configured. Skipping dynamic download.")
             return
 
+        # Detect if URL is a Google Drive folder
+        if 'drive.google.com/drive/folders/' in zip_url:
+            self._download_from_gdrive_folder(zip_url)
+        else:
+            self._download_and_extract_zip(zip_url)
+
+    def _download_from_gdrive_folder(self, folder_url: str) -> None:
+        """Download individual files from a public Google Drive folder using the Drive API v3."""
+        import requests
+
+        # Extract folder ID from URL
+        folder_id = folder_url.rstrip('/').split('/')[-1].split('?')[0]
+        print(f"Detected Google Drive folder ID: {folder_id}. Listing files...")
+        
+        # Known mapping of CSV filenames to their local subdirectories
+        file_destination_map = {
+            'industries.csv': 'info',
+            'postings.csv': 'info',
+            'skills.csv': 'info',
+            'companies.csv': 'companies',
+            'company_industries.csv': 'companies',
+            'company_specialities.csv': 'companies',
+            'employee_counts.csv': 'companies',
+            'job_skills.csv': 'job',
+            'job_industries.csv': 'job',
+            'benefits.csv': 'job',
+            'salaries.csv': 'job',
+            'DataAnalyst.csv': 'analysis',
+            'ds_salaries.csv': 'analysis',
+        }
+        
+        api_key = None  # Public folders don't need an API key for listing
+        list_url = "https://www.googleapis.com/drive/v3/files"
+        params = {
+            'q': f"'{folder_id}' in parents and trashed = false",
+            'fields': 'files(id, name, mimeType)',
+            'pageSize': 100,
+        }
+        
+        try:
+            response = requests.get(list_url, params=params, timeout=30)
+            if response.status_code != 200:
+                print(f"Could not list Google Drive folder (status {response.status_code}). "
+                      f"Attempting recursive subfolder scan...")
+                # Try scanning subfolders by known names
+                self._download_gdrive_subfolders(folder_id, file_destination_map)
+                return
+                
+            files = response.json().get('files', [])
+            if not files:
+                print("Google Drive folder appears empty or inaccessible. "
+                      "Make sure sharing is set to 'Anyone with the link'.")
+                return
+            
+            # Check if the folder contains subfolders (info, companies, job, analysis)
+            subfolders = {f['name']: f['id'] for f in files if f.get('mimeType') == 'application/vnd.google-apps.folder'}
+            csv_files = [f for f in files if f['name'].lower().endswith('.csv')]
+            
+            if subfolders:
+                # Folder contains subdirectories — download CSVs from each
+                print(f"Found {len(subfolders)} subfolders: {list(subfolders.keys())}")
+                for subfolder_name, subfolder_id in subfolders.items():
+                    sub_params = {
+                        'q': f"'{subfolder_id}' in parents and trashed = false",
+                        'fields': 'files(id, name)',
+                        'pageSize': 100,
+                    }
+                    sub_resp = requests.get(list_url, params=sub_params, timeout=30)
+                    if sub_resp.status_code != 200:
+                        print(f"Could not list subfolder '{subfolder_name}'")
+                        continue
+                    sub_files = sub_resp.json().get('files', [])
+                    for sf in sub_files:
+                        if sf['name'].lower().endswith('.csv'):
+                            dest_dir = self.base_dir / subfolder_name
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            dest_path = dest_dir / sf['name']
+                            self._download_gdrive_file(sf['id'], dest_path)
+            elif csv_files:
+                # Folder contains flat CSVs — map them to subdirectories
+                print(f"Found {len(csv_files)} CSV files in root folder. Mapping to subdirectories...")
+                for f in csv_files:
+                    subdir = file_destination_map.get(f['name'])
+                    if subdir:
+                        dest_dir = self.base_dir / subdir
+                        dest_dir.mkdir(parents=True, exist_ok=True)
+                        dest_path = dest_dir / f['name']
+                        self._download_gdrive_file(f['id'], dest_path)
+                    else:
+                        print(f"Skipping unknown file: {f['name']}")
+            else:
+                print("No CSV files or subfolders found in Google Drive folder.")
+                
+        except Exception as e:
+            logger.error(f"Failed to download from Google Drive folder: {e}", exc_info=True)
+
+    def _download_gdrive_subfolders(self, folder_id: str, file_map: dict) -> None:
+        """Fallback: try downloading known files directly by scanning subfolder names."""
+        import requests
+        
+        known_subfolders = {'info', 'companies', 'job', 'analysis'}
+        list_url = "https://www.googleapis.com/drive/v3/files"
+        
+        for subfolder_name in known_subfolders:
+            dest_dir = self.base_dir / subfolder_name
+            dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Try to download files by mapping
+        for filename, subdir in file_map.items():
+            dest_dir = self.base_dir / subdir
+            dest_path = dest_dir / filename
+            if dest_path.exists():
+                print(f"File already exists, skipping: {dest_path}")
+                continue
+            print(f"File not available for direct download: {filename} -> {subdir}/")
+
+    def _download_gdrive_file(self, file_id: str, dest_path: Path) -> None:
+        """Download a single file from Google Drive by file ID."""
+        import requests
+        
+        if dest_path.exists():
+            print(f"File already exists, skipping: {dest_path}")
+            return
+            
+        download_url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        session = requests.Session()
+        
+        try:
+            response = session.get(download_url, stream=True, timeout=60)
+            
+            # Handle large file confirmation page
+            for key, value in response.cookies.items():
+                if key.startswith('download_warning'):
+                    response = session.get(
+                        download_url, 
+                        params={'confirm': value}, 
+                        stream=True, 
+                        timeout=60
+                    )
+                    break
+            
+            response.raise_for_status()
+            
+            with open(dest_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            print(f"Downloaded: {dest_path.name} -> {dest_path}")
+        except Exception as e:
+            logger.error(f"Failed to download Google Drive file {file_id}: {e}", exc_info=True)
+
+    def _download_and_extract_zip(self, zip_url: str) -> None:
+        """Download and extract a ZIP file from a direct URL."""
         print(f"Downloading raw dataset zip from {zip_url}...")
         temp_zip = Path(settings.BASE_DIR) / 'core' / 'data' / 'raw_data.zip'
         temp_zip.parent.mkdir(parents=True, exist_ok=True)
@@ -743,6 +896,7 @@ class AdzunaAPIIngestionPipeline:
 
     def run(self) -> None:
         """Execute the ingestion workflow across all countries and predict salaries."""
+        import time
         logger.info("Starting daily Adzuna API ingestion...")
         for country in self.countries:
             logger.info(f"Ingesting Adzuna jobs for country: {country}")
@@ -751,6 +905,8 @@ class AdzunaAPIIngestionPipeline:
             self.ingest_country_salary_history(country)
             self.ingest_country_salary_histogram(country)
             self.ingest_country_top_companies(country)
+            # Wait between countries to avoid overwhelming Adzuna API
+            time.sleep(3)
         
         self.ingest_jobsworth_prediction()
         logger.info(
@@ -789,6 +945,7 @@ class AdzunaAPIIngestionPipeline:
 
     def ingest_country_jobs(self, country: str) -> None:
         """Fetch job search pages and bulk load listings into JobPosting table."""
+        import time
         all_jobs = []
         for page in range(1, 6):
             try:
@@ -796,6 +953,8 @@ class AdzunaAPIIngestionPipeline:
                 if not results:
                     break
                 all_jobs.extend(results)
+                # Respect rate limits — wait between requests
+                time.sleep(2)
             except Exception as e:
                 logger.error(f"Error occurred during Adzuna fetch for country {country} page {page}: {e}", exc_info=True)
                 break
